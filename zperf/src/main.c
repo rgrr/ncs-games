@@ -30,12 +30,20 @@
  *
  * Testing
  * -------
- * for MSS in 10 100 800 1450; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
- * for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+ * IPv6:
+ *     for MSS in 10 100 800 1450; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+ *     for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
  *
  * UDP does only work with IPv4!
+ *     for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1 -u; sleep 2; done
  *
- * for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1 -u; sleep 2; done
+ * SystemView tracing:
+ *     cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt /opt/SEGGER/SystemView_V352a/Description
+ *
+ *     this did not work:
+ *         cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt ~/.config/SEGGER/
+ *
+ *     iperf -c 192.168.2.1 -e -i 1 -M 8000 -l 125 -P 1 -b 1000
  */
 
 #include <zephyr/usb/usb_device.h>
@@ -124,5 +132,15 @@ int main(void)
         zperf_tcp_download( &param, my_zperf_callback, NULL);
         zperf_udp_download( &param, my_zperf_callback, NULL);   // just with IPv4?  And no callback?
     }
+
+#if 0
+    for (;;)
+    {
+        static int cnt;
+
+        k_msleep(1000);
+        //printk("...%d\n", ++cnt);
+    }
+#endif
     return 0;
 }
