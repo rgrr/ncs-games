@@ -1,0 +1,7 @@
+# editors
+*.swp
+*~
+*.kate-swp
+
+# build
+**/_build/
