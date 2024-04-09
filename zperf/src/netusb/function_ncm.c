@@ -27,22 +27,35 @@ LOG_MODULE_REGISTER(usb_ncm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
 #define ECM_OUT_EP_IDX          1
 #define ECM_IN_EP_IDX           2
 
+#define NCM_SUBCLASS            0x0d                 // TODO -> usb_cdc.h
+#define ETHERNET_FUNC_DESC_NCM  0x1a                 // TODO -> usb_cdc.h
+#define NCM_DATA_PROTOCOL_NETWORK_TRANSFER_BLOCK 1
+
+struct cdc_ncm_functional_descriptor {               // TODO -> usb_cdc.h
+    uint8_t bFunctionLength;
+    uint8_t bDescriptorType;
+    uint8_t bDescriptorSubtype;
+    uint16_t bcdNcmVersion;
+    uint8_t bmNetworkCapabilities;
+} __packed;
+
 
 static uint8_t tx_buf[NET_ETH_MAX_FRAME_SIZE], rx_buf[NET_ETH_MAX_FRAME_SIZE];
 
 struct usb_cdc_ecm_config {
-    struct usb_association_descriptor iad;
-    struct usb_if_descriptor if0;
-    struct cdc_header_descriptor if0_header;
-    struct cdc_union_descriptor if0_union;
-    struct cdc_ecm_descriptor if0_netfun_ecm;
-    struct usb_ep_descriptor if0_int_ep;
+    struct usb_association_descriptor iad;     // TUSB_DESC_INTERFACE_ASSOCIATION
+    struct usb_if_descriptor if0;              // TUSB_DESC_INTERFACE
+    struct cdc_header_descriptor if0_header;   // TUSB_DESC_CS_INTERFACE
+    struct cdc_union_descriptor if0_union;     // TUSB_DESC_CS_INTERFACE
+    struct cdc_ecm_descriptor if0_netfun_ecm;  // TUSB_DESC_CS_INTERFACE
+    struct cdc_ncm_functional_descriptor if0_netfun_ncm;
+    struct usb_ep_descriptor if0_int_ep;       // TUSB_DESC_ENDPOINT
 
-    struct usb_if_descriptor if1_0;
+    struct usb_if_descriptor if1_0;            // TUSB_DESC_INTERFACE
 
-    struct usb_if_descriptor if1_1;
-    struct usb_ep_descriptor if1_1_in_ep;
-    struct usb_ep_descriptor if1_1_out_ep;
+    struct usb_if_descriptor if1_1;            // TUSB_DESC_INTERFACE
+    struct usb_ep_descriptor if1_1_in_ep;      // TUSB_DESC_ENDPOINT
+    struct usb_ep_descriptor if1_1_out_ep;     // TUSB_DESC_ENDPOINT
 } __packed;
 
 USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
@@ -52,7 +65,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bFirstInterface = 0,
         .bInterfaceCount = 0x02,
         .bFunctionClass = USB_BCC_CDC_CONTROL,
-        .bFunctionSubClass = ECM_SUBCLASS,
+        .bFunctionSubClass = NCM_SUBCLASS,
         .bFunctionProtocol = 0,
         .iFunction = 0,
     },
@@ -65,7 +78,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bAlternateSetting = 0,
         .bNumEndpoints = 1,
         .bInterfaceClass = USB_BCC_CDC_CONTROL,
-        .bInterfaceSubClass = ECM_SUBCLASS,
+        .bInterfaceSubClass = NCM_SUBCLASS,
         .bInterfaceProtocol = 0,
         .iInterface = 0,
     },
@@ -84,7 +97,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bControlInterface = 0,
         .bSubordinateInterface0 = 1,
     },
-    /* Ethernet Networking Functional descriptor */
+    /* Ethernet Networking Functional descriptor I */
     .if0_netfun_ecm = {
         .bFunctionLength = sizeof(struct cdc_ecm_descriptor),
         .bDescriptorType = USB_DESC_CS_INTERFACE,
@@ -95,20 +108,24 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .wNumberMCFilters = sys_cpu_to_le16(0), /* None */
         .bNumberPowerFilters = 0, /* No wake up */
     },
+    /* Ethernet Networking Functional descriptor II */
+    .if0_netfun_ncm = {
+        .bFunctionLength = sizeof(struct cdc_ncm_functional_descriptor),
+        .bDescriptorType = USB_DESC_CS_INTERFACE,
+        .bDescriptorSubtype = ETHERNET_FUNC_DESC_NCM,
+        .bcdNcmVersion = sys_cpu_to_le16(0x100),
+        .bmNetworkCapabilities = 0,
+    },
     /* Notification EP Descriptor */
     .if0_int_ep = {
         .bLength = sizeof(struct usb_ep_descriptor),
         .bDescriptorType = USB_DESC_ENDPOINT,
-        .bEndpointAddress = CDC_ECM_INT_EP_ADDR,
+        .bEndpointAddress = CDC_NCM_INT_EP_ADDR,
         .bmAttributes = USB_DC_EP_INTERRUPT,
         .wMaxPacketSize =
             sys_cpu_to_le16(
-#if 0   // TODO
-            CONFIG_CDC_ECM_INTERRUPT_EP_MPS),
-#else
-            16),
-#endif
-        .bInterval = 0x09,
+            CONFIG_CDC_ECM_INTERRUPT_EP_MPS),             // TODO TinyUSB: 64
+        .bInterval = 0x09,                                // TODO TineUSB: 50
     },
 
     /* Interface descriptor 1/0 */
@@ -121,7 +138,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bNumEndpoints = 0,
         .bInterfaceClass = USB_BCC_CDC_DATA,
         .bInterfaceSubClass = 0,
-        .bInterfaceProtocol = 0,
+        .bInterfaceProtocol = NCM_DATA_PROTOCOL_NETWORK_TRANSFER_BLOCK,
         .iInterface = 0,
     },
 
@@ -134,38 +151,30 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bAlternateSetting = 1,
         .bNumEndpoints = 2,
         .bInterfaceClass = USB_BCC_CDC_DATA,
-        .bInterfaceSubClass = ECM_SUBCLASS,
-        .bInterfaceProtocol = 0,
+        .bInterfaceSubClass = 0,                         // TODO was: ECM_SUBCLASS,
+        .bInterfaceProtocol = NCM_DATA_PROTOCOL_NETWORK_TRANSFER_BLOCK,
         .iInterface = 0,
     },
     /* Data Endpoint IN */
     .if1_1_in_ep = {
         .bLength = sizeof(struct usb_ep_descriptor),
         .bDescriptorType = USB_DESC_ENDPOINT,
-        .bEndpointAddress = CDC_ECM_IN_EP_ADDR,
+        .bEndpointAddress = CDC_NCM_IN_EP_ADDR,
         .bmAttributes = USB_DC_EP_BULK,
         .wMaxPacketSize =
             sys_cpu_to_le16(
-#if 0 // TODO
             CONFIG_CDC_ECM_BULK_EP_MPS),
-#else
-            64),
-#endif
         .bInterval = 0x00,
     },
     /* Data Endpoint OUT */
     .if1_1_out_ep = {
         .bLength = sizeof(struct usb_ep_descriptor),
         .bDescriptorType = USB_DESC_ENDPOINT,
-        .bEndpointAddress = CDC_ECM_OUT_EP_ADDR,
+        .bEndpointAddress = CDC_NCM_OUT_EP_ADDR,
         .bmAttributes = USB_DC_EP_BULK,
         .wMaxPacketSize =
             sys_cpu_to_le16(
-#if 0 // TODO
             CONFIG_CDC_ECM_BULK_EP_MPS),
-#else
-            64),
-#endif
         .bInterval = 0x00,
     },
 };
@@ -184,17 +193,17 @@ static struct usb_ep_cfg_data ecm_ep_data[] = {
     /* Configuration ECM */
     {
         .ep_cb = ecm_int_in,
-        .ep_addr = CDC_ECM_INT_EP_ADDR
+        .ep_addr = CDC_NCM_INT_EP_ADDR
     },
     {
         /* high-level transfer mgmt */
         .ep_cb = usb_transfer_ep_callback,
-        .ep_addr = CDC_ECM_OUT_EP_ADDR
+        .ep_addr = CDC_NCM_OUT_EP_ADDR
     },
     {
         /* high-level transfer mgmt */
         .ep_cb = usb_transfer_ep_callback,
-        .ep_addr = CDC_ECM_IN_EP_ADDR
+        .ep_addr = CDC_NCM_IN_EP_ADDR
     },
 };
 
