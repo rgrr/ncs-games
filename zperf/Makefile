@@ -2,6 +2,7 @@
 #
 BUILD_DIR := _build
 PROJECT   := zephyr
+BOARD     := nrf52840dk_nrf52840
 
 SHELL     := /usr/bin/bash
 
@@ -21,15 +22,15 @@ clean:
 # -DCONFIG_SIZE_OPTIMIZATIONS=y
 .PHONY: create-config
 create-config:
-	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board nrf52840dk_nrf52840 --no-sysbuild --cmake-only -- -DNCS_TOOLCHAIN_VERSION=NONE -DEXTRA_CONF_FILE=overlay-netusb.conf -DBOARD_ROOT=. -DCACHED_CONF_FILE=prj.conf
+	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
 
 .PHONY: create-config-debug
 create-config-debug:
-	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board nrf52840dk_nrf52840 --no-sysbuild --cmake-only -- -DCONFIG_DEBUG_OPTIMIZATIONS=y -DCONFIG_DEBUG_THREAD_INFO=y -DCONFIG_CORTEX_M_DEBUG_MONITOR_HOOK=y -DCONFIG_SEGGER_DEBUGMON=y -DNCS_TOOLCHAIN_VERSION=NONE -DEXTRA_CONF_FILE=overlay-netusb.conf -DBOARD_ROOT=. -DCACHED_CONF_FILE=prj.conf
+	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DCONFIG_DEBUG_OPTIMIZATIONS=y -DCONFIG_DEBUG_THREAD_INFO=y -DCONFIG_CORTEX_M_DEBUG_MONITOR_HOOK=y -DCONFIG_SEGGER_DEBUGMON=y -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
 
 .PHONY: create-config-speed
 create-config-speed:
-	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board nrf52840dk_nrf52840 --no-sysbuild --cmake-only -- -DCONFIG_SPEED_OPTIMIZATIONS=y -DNCS_TOOLCHAIN_VERSION=NONE -DEXTRA_CONF_FILE=overlay-netusb.conf -DBOARD_ROOT=. -DCACHED_CONF_FILE=prj.conf
+	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DCONFIG_SPEED_OPTIMIZATIONS=y -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
 
 
 .PHONY: all
