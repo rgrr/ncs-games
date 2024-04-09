@@ -1,0 +1,115 @@
+:source-highlighter: rouge
+:toc:
+:toclevels: 5
+
+# zperf + NCM
+
+Trying to create an NCM driver for Zephyr.
+
+NOTE: Because this repo is not intended for generic use, 
+      there are absolute file locations, especially in `../zephyr_env.sh`.
+
+## Intro
+
+Some time ago I created an NCM driver for USB for my YaPicoprobe side project.
+I tried to get it into TinyUSB... without success.
+
+So next try will be to port the driver from TinyUSB to Zephyr and drop it there.
+
+
+## Host Configuration
+
+Add something like the following to `/etc/network/interfaces`:
+
+[source]
+----
+allow-hotplug enx00005e005301
+   iface enx00005e005301 inet static
+       address 192.168.2.2
+       netmask 255.255.255.0
+   iface enx00005e005301 inet6 static
+       address 2001:db8::2
+       netmask 64
+----
+
+Then restart networking with `sudo systemctl restart networking.service`.
+
+
+## Development
+
+### Target
+
+My target board is a PCA10056 (Nordic nRF52840 DK).
+
+
+### Building
+
+Use the `Makefile`!  Perhaps some help from the "nRF Connect SDK" plugins
+is required (but shouldn't actually).
+
+
+### Flashing into the Target
+
+I have connected YaPicoprobe with the Nordic board (for hobby reasons).  Flashing is simply
+done with a copy operation of a UF2 image to the probes MSC.
+
+
+## Testing
+
+### Log Output
+
+Zephyr log output is transferred via RTT and YaPicoprobe to a CDC COM port
+and displayed with `grabserial`. 
+
+
+### iperf
+
+The iperf servers UDP and TCP on the device are started automatically.
+Testing IPv6 is thus a simple
+
+  for MSS in 10 100 800 1450; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+
+or
+
+  for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+
+Testing IPv4 and UDP
+
+  for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1 -u; sleep 2; done
+
+(IPv6 and UDP does not work for me)
+
+Traffic can be nicely monitored with Wireshark.
+
+
+### Telnet
+
+Telnet connection can be established with
+
+  telnet 2001:db8::1
+
+
+### SystemView
+
+For debugging purposes SystemView support has been enabled.  To get nice
+Zephyr symbols one has to copy a description file from Zephyr to SystemView:
+
+  sudo cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt /opt/SEGGER/SystemView_V352a/Description
+
+(`cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt ~/.config/SEGGER/` did not work for me)
+
+SystemView connection is done via YaPicoprobe.
+
+
+## Configuration
+
+All the configuration is done in `prj.conf`.
+
+CONFIG_USB_DEVICE_NETWORK_MY_ECM::
+   This is the unmodified ECM driver from Zephyr.  Used for setup testing.
+   
+
+NOTE: Only one USB network configuration is allowed at the same time.
+      All others have to be disabled manually.
+
+      

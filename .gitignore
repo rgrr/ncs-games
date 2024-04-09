@@ -5,3 +5,4 @@
 
 # build
 **/_build/
+zperf/.asciidoctorconfig.adoc
