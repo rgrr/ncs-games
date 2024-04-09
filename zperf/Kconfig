@@ -20,6 +20,15 @@ menu "My USB Device Networking support"
             Ethernet Control Model (MY_ECM) is a part of  Communications Device
             Class (CDC) USB protocol specified by USB-IF.
     
+    config USB_DEVICE_NETWORK_MY_NCM
+        bool "USB Network Control Model (NCM) Networking device"
+        select USB_DEVICE_NETWORK
+        select USB_COMPOSITE_DEVICE
+        help
+            Network Control Model (NCM) is a part of  Communications Device
+            Class (CDC) USB protocol specified by USB-IF.
+    
+    
     if USB_DEVICE_NETWORK_MY_ECM
     
         config CDC_ECM_INTERRUPT_EP_MPS
@@ -45,7 +54,22 @@ menu "My USB Device Networking support"
                 default MAC.
     
     endif # USB_DEVICE_NETWORK_MY_ECM
+
     
+    if USB_DEVICE_NETWORK_MY_NCM
+    
+        config USB_DEVICE_NETWORK_ECM_MAC
+            string "USB ECM/NCM Host OS MAC Address"
+            default "00005E005301"
+            help
+                MAC Host OS Address string.
+                MAC Address which would be assigned to network device, created in
+                the Host's Operating System. Use RFC 7042 Documentation values as
+                default MAC.
+    
+    endif # USB_DEVICE_NETWORK_MY_NCM
+    
+
     if USB_DEVICE_NETWORK
         
         module = USB_DEVICE_NETWORK
