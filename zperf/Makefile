@@ -17,12 +17,12 @@ clean:
 	. ../zephyr-env.sh; west build -t clean --build-dir $(BUILD_DIR)
 
 
+# -DCONFIG_SIZE_OPTIMIZATIONS=y
 # -DCONFIG_DEBUG_OPTIMIZATIONS=y -DCONFIG_DEBUG_THREAD_INFO=y -DCONFIG_CORTEX_M_DEBUG_MONITOR_HOOK=y -DCONFIG_SEGGER_DEBUGMON=y
 # -DCONFIG_SPEED_OPTIMIZATIONS=y
-# -DCONFIG_SIZE_OPTIMIZATIONS=y
 .PHONY: create-config
 create-config:
-	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
+	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DCONFIG_SIZE_OPTIMIZATIONS=y -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
 
 .PHONY: create-config-debug
 create-config-debug:
@@ -42,16 +42,8 @@ all:
 	@echo "--------------------------"
 
 
-.PHONY: build
-build:
-	. ../zephyr-env.sh; ninja -C _build -v all
-	@echo "--------------------------"
-	@arm-none-eabi-size -Ax $(BUILD_DIR)/zephyr/$(PROJECT).elf | awk '/^[a-z]/ {size=strtonum($$2); addr=strtonum($$3); if (addr>=0x20000000 && addr<0x20040000) ram += size; if (addr>=0x00000000 && addr<0x20000000) rom += size; } END {print "Flash: " rom "  RAM: " ram}'
-	@echo "--------------------------"
-
-
 .PHONY: details
-details: build
+details: all
 	@arm-none-eabi-size -Ax $(BUILD_DIR)/zephyr/$(PROJECT).elf
 
 

@@ -5,14 +5,14 @@
  */
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(usb_ecm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
+LOG_MODULE_REGISTER(usb_ncm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
 
 /* Enable verbose debug printing extra hexdumps */
 #define VERBOSE_DEBUG   0
 
 #include <zephyr/net/net_pkt.h>
 #include <zephyr/net/ethernet.h>
-#include "xxsubsys/net/ip/net_private.h"
+#include "net_private.h"
 
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/usb/class/usb_cdc.h>
@@ -103,7 +103,11 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bmAttributes = USB_DC_EP_INTERRUPT,
         .wMaxPacketSize =
             sys_cpu_to_le16(
+#if 0   // TODO
             CONFIG_CDC_ECM_INTERRUPT_EP_MPS),
+#else
+            16),
+#endif
         .bInterval = 0x09,
     },
 
@@ -142,7 +146,11 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bmAttributes = USB_DC_EP_BULK,
         .wMaxPacketSize =
             sys_cpu_to_le16(
+#if 0 // TODO
             CONFIG_CDC_ECM_BULK_EP_MPS),
+#else
+            64),
+#endif
         .bInterval = 0x00,
     },
     /* Data Endpoint OUT */
@@ -153,7 +161,11 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ecm_config cdc_ecm_cfg = {
         .bmAttributes = USB_DC_EP_BULK,
         .wMaxPacketSize =
             sys_cpu_to_le16(
+#if 0 // TODO
             CONFIG_CDC_ECM_BULK_EP_MPS),
+#else
+            64),
+#endif
         .bInterval = 0x00,
     },
 };
