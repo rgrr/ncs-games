@@ -27,6 +27,8 @@
  *       address 2001:db8::2
  *       netmask 64
  *
+ * DHCPv4 server sets unfortunately the default route?
+ *
  *
  * Testing
  * -------
