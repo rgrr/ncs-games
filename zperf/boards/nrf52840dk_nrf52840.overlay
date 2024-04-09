@@ -1,0 +1,7 @@
+/*
+ * Copyright 2022 NXP
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* put here some board specifica, included automatically if "-DBOARD_ROOT=." is specified */
