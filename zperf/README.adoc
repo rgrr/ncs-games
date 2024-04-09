@@ -11,15 +11,24 @@ NOTE: Because this repo is not intended for generic use,
 
 ## Intro
 
-Some time ago I created an NCM driver for USB for my YaPicoprobe side project.
-I tried to get it into TinyUSB... without success.
+Some time ago I created an NCM driver for USB for my https://github.com/rgrr/yapicoprobe/[YaPicoprobe] side project.
+I tried to get it https://github.com/hathach/tinyusb/pull/2227[into TinyUSB]... without success.
 
-So next try will be to port the driver from TinyUSB to Zephyr and drop it there.
+So next try will be to port the driver from TinyUSB to https://www.zephyrproject.org/[Zephyr] and drop it there.
 
 
-## Host Configuration
+## Development
 
-Add something like the following to `/etc/network/interfaces`:
+### Target
+
+My target board is a PCA10056 (Nordic nRF52840 DK).
+
+
+### Host (Configuration)
+
+Development is done on a Debian testing machine.
+
+To get the target connecting, add something like the following to `/etc/network/interfaces`:
 
 [source]
 ----
@@ -33,13 +42,6 @@ allow-hotplug enx00005e005301
 ----
 
 Then restart networking with `sudo systemctl restart networking.service`.
-
-
-## Development
-
-### Target
-
-My target board is a PCA10056 (Nordic nRF52840 DK).
 
 
 ### Building
