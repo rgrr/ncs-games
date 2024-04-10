@@ -214,6 +214,15 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
 };
 
 
+static int ncm_connect(bool connected);
+static int ncm_send(struct net_pkt *pkt);
+
+static const struct netusb_function ncm_function = {
+    .connect_media = ncm_connect,
+    .send_pkt = ncm_send,
+};
+
+
 struct usb_cdc_ncm_mac_descr {
     uint8_t bLength;
     uint8_t bDescriptorType;
@@ -379,8 +388,11 @@ static struct usb_ep_cfg_data ncm_ep_data[] = {
 
 
 
-static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len,
-                             uint8_t **data)
+static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8_t **data)
+/**
+ * Class handler.
+ * Called for messages with \a USB_REQTYPE_TYPE_CLASS
+ */
 {
     LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
             *len, setup->bmRequestType, setup->bRequest,
@@ -390,26 +402,6 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len,
     {
         case USB_REQTYPE_TYPE_STANDARD:
             LOG_DBG("  USB_REQTYPE_TYPE_STANDARD: %d %d %d %d", setup->bRequest, setup->wValue, setup->wIndex, setup->wLength);
-
-            switch (setup->bRequest)
-            {
-                case USB_SREQ_GET_INTERFACE: {
-                    LOG_DBG("    USB_SREQ_GET_INTERFACE");
-                    return -ENOTSUP;
-                }
-                break;
-
-                case USB_SREQ_SET_INTERFACE: {
-                    LOG_DBG("    USB_SREQ_SET_INTERFACE");
-                    return -ENOTSUP;
-                }
-                break;
-
-                // unsupported request
-                default:
-                    LOG_DBG("    unsupported request %d", setup->bRequest);
-                    return -ENOTSUP;
-            }
             break;
 
         case USB_REQTYPE_TYPE_CLASS:
@@ -424,14 +416,24 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len,
             }
             else if (setup->bRequest == NCM_SET_ETHERNET_PACKET_FILTER)
             {
-                LOG_DBG("    NCM_SET_ETHERNET_PACKET_FILTER (not supported)");
+                LOG_WRN("    NCM_SET_ETHERNET_PACKET_FILTER (not supported)");
                 return -ENOTSUP;
             }
-            LOG_DBG("    not supported: %d", setup->bRequest);
+            else if (setup->bRequest == NCM_GET_NTB_INPUT_SIZE)
+            {
+                LOG_ERR("    NCM_GET_NTB_INPUT_SIZE (not supported, but required)");
+                return -ENOTSUP;
+            }
+            else if (setup->bRequest == NCM_SET_NTB_INPUT_SIZE)
+            {
+                LOG_ERR("    NCM_SET_NTB_INPUT_SIZE (not supported, but required)");
+                return -ENOTSUP;
+            }
+            LOG_WRN("    not supported: %d", setup->bRequest);
             return -ENOTSUP;
 
-            // unsupported request
         default:
+            // unsupported request
             return -ENOTSUP;
     }
 
@@ -452,12 +454,16 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len,
 
 
 
-static int ncm_vendor_handler(struct usb_setup_packet *setup, int32_t *len,
-                             uint8_t **data)
+static int ncm_vendor_handler(struct usb_setup_packet *setup, int32_t *len, uint8_t **data)
+/**
+ * Vendor handler.
+ * Called for messages with \a USB_REQTYPE_TYPE_VENDOR
+ */
 {
     LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
             *len, setup->bmRequestType, setup->bRequest,
             netusb_enabled());
+
     return -EINVAL;
 }   // ncm_vendor_handler
 
@@ -465,7 +471,8 @@ static int ncm_vendor_handler(struct usb_setup_packet *setup, int32_t *len,
 
 static int ncm_custom_handler(struct usb_setup_packet *setup, int32_t *len, uint8_t **data)
 /**
- * Custom handler called before everything else.
+ * Custom handler.
+ * Called for messages with \a USB_REQTYPE_TYPE_STANDARD
  */
 {
     LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
@@ -475,48 +482,25 @@ static int ncm_custom_handler(struct usb_setup_packet *setup, int32_t *len, uint
     switch (setup->RequestType.type)
     {
         case USB_REQTYPE_TYPE_STANDARD:
-            LOG_DBG("  USB_REQTYPE_TYPE_STANDARD: %d %d %d %d", setup->bRequest, setup->wValue, setup->wIndex, setup->wLength);
+            LOG_DBG("  USB_REQTYPE_TYPE_STANDARD: req:%d val:%d idx:%d len:ß%d", setup->bRequest, setup->wValue, setup->wIndex, setup->wLength);
 
             switch (setup->bRequest)
             {
-                case USB_SREQ_GET_DESCRIPTOR:
-                case USB_SREQ_SET_CONFIGURATION:
-                    // expected during startup, hand back to USB stack
-                    return -EINVAL;
-
-                case USB_SREQ_GET_INTERFACE:
-                {
+                case USB_SREQ_GET_INTERFACE: {
                     LOG_DBG("    USB_SREQ_GET_INTERFACE");
-#if 0
-                    TU_VERIFY(ncm_interface.itf_num + 1 == request->wIndex, false);
-
-                    TU_LOG3("  TUSB_REQ_GET_INTERFACE - %d\n", ncm_interface.itf_data_alt);
-                    tud_control_xfer(rhport, request, &ncm_interface.itf_data_alt, 1);
-#else
-                    return -EINVAL;
-#endif
                 }
                 break;
 
-                case USB_SREQ_SET_INTERFACE:
-                {
+                case USB_SREQ_SET_INTERFACE: {
                     LOG_DBG("    USB_SREQ_SET_INTERFACE");
-#if 0
-                    TU_VERIFY(ncm_interface.itf_num + 1 == request->wIndex  &&  request->wValue < 2, false);
-
-                    ncm_interface.itf_data_alt = (uint8_t)request->wValue;
-                    TU_LOG3("  TUSB_REQ_SET_INTERFACE - %d %d %d\n", ncm_interface.itf_data_alt, request->wIndex, ncm_interface.itf_num);
-
-                    if (ncm_interface.itf_data_alt == 1) {
-                        tud_network_recv_renew_r(rhport);
-                        notification_xmit(rhport, false);
-                    }
-                    tud_control_status(rhport, request);
-#else
-                    return -EINVAL;
-#endif
                 }
-                break;
+                return -EINVAL;
+
+                case USB_SREQ_SET_CONFIGURATION: {
+                    LOG_DBG("    USB_SREQ_SET_CONFIGURATION val:%d idx:%d len:%d", setup->wValue, setup->wIndex, setup->wLength);
+                    netusb_enable(&ncm_function);
+                }
+                return -EINVAL;
 
                 // unsupported request
                 default:
@@ -524,22 +508,6 @@ static int ncm_custom_handler(struct usb_setup_packet *setup, int32_t *len, uint
             }
             break;
 
-        case USB_REQTYPE_TYPE_CLASS:
-            //TU_VERIFY(ncm_interface.itf_num == request->wIndex, false);
-
-            LOG_DBG("  USB_REQTYPE_TYPE_CLASS: %d", setup->bRequest);
-
-#if 0
-            if (request->bRequest == NCM_GET_NTB_PARAMETERS) {
-                // transfer NTB parameters to host.
-                // TODO can one assume, that tud_control_xfer() succeeds?
-                TU_LOG3("    NCM_GET_NTB_PARAMETERS\n");
-                tud_control_xfer(rhport, request, (void*) (uintptr_t) &ntb_parameters, sizeof(ntb_parameters));
-            }
-#endif
-            break;
-
-            // unsupported request
         default:
             return -EINVAL;
     }
@@ -822,8 +790,8 @@ USBD_DEFINE_CFG_DATA(cdc_ncm_config) = {
     .cb_usb_status = ncm_status_cb,
     .interface = {
         .class_handler = ncm_class_handler,
-        .custom_handler = NULL, //ncm_custom_handler,
-        .vendor_handler = NULL, //ncm_vendor_handler,
+        .custom_handler = ncm_custom_handler,
+        .vendor_handler = ncm_vendor_handler,
     },
     .num_endpoints = ARRAY_SIZE(ncm_ep_data),
     .endpoint = ncm_ep_data,
