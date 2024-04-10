@@ -51,3 +51,9 @@ details: all
 flash: all
 	cp $(BUILD_DIR)/zephyr/$(PROJECT).uf2 /media/picoprobe
 	@echo "ok."
+
+
+.PHONY: reset
+reset:
+	pyocd reset -f 10m
+
