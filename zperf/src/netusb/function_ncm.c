@@ -189,9 +189,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
         .bDescriptorType = USB_DESC_ENDPOINT,
         .bEndpointAddress = CDC_NCM_IN_EP_ADDR,
         .bmAttributes = USB_DC_EP_BULK,
-        .wMaxPacketSize =
-            sys_cpu_to_le16(
-            CONFIG_CDC_ECM_BULK_EP_MPS),
+        .wMaxPacketSize = sys_cpu_to_le16(CONFIG_CDC_ECM_BULK_EP_MPS),
         .bInterval = 0x00,
     },
     // Data Endpoint OUT
@@ -200,9 +198,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
         .bDescriptorType = USB_DESC_ENDPOINT,
         .bEndpointAddress = CDC_NCM_OUT_EP_ADDR,
         .bmAttributes = USB_DC_EP_BULK,
-        .wMaxPacketSize =
-            sys_cpu_to_le16(
-            CONFIG_CDC_ECM_BULK_EP_MPS),
+        .wMaxPacketSize = sys_cpu_to_le16(CONFIG_CDC_ECM_BULK_EP_MPS),
         .bInterval = 0x00,
     },
 };
@@ -276,24 +272,20 @@ __aligned(4) static ncm_interface_t ncm_interface;
 
 /**
  * This is the NTB parameter structure
- *
- * \attention
- *     We are lucky, that byte order is correct
- * TODO byte order!
  */
 __aligned(4) static const ntb_parameters_t ntb_parameters = {
-    .wLength                 = sizeof(ntb_parameters_t),
-    .bmNtbFormatsSupported   = 0x01,                                 // 16-bit NTB supported
-    .dwNtbInMaxSize          = CFG_TUD_NCM_IN_NTB_MAX_SIZE,
-    .wNdbInDivisor           = 4,
-    .wNdbInPayloadRemainder  = 0,
-    .wNdbInAlignment         = CFG_TUD_NCM_ALIGNMENT,
-    .wReserved               = 0,
-    .dwNtbOutMaxSize         = CFG_TUD_NCM_OUT_NTB_MAX_SIZE,
-    .wNdbOutDivisor          = 4,
-    .wNdbOutPayloadRemainder = 0,
-    .wNdbOutAlignment        = CFG_TUD_NCM_ALIGNMENT,
-    .wNtbOutMaxDatagrams     = 1                                     // TODO 0=no limit
+    .wLength                 = sys_cpu_to_le16(sizeof(ntb_parameters_t)),
+    .bmNtbFormatsSupported   = sys_cpu_to_le16(0x01),                                 // 16-bit NTB supported
+    .dwNtbInMaxSize          = sys_cpu_to_le32(CFG_TUD_NCM_IN_NTB_MAX_SIZE),
+    .wNdbInDivisor           = sys_cpu_to_le16(4),
+    .wNdbInPayloadRemainder  = sys_cpu_to_le16(0),
+    .wNdbInAlignment         = sys_cpu_to_le16(CFG_TUD_NCM_ALIGNMENT),
+    .wReserved               = sys_cpu_to_le16(0),
+    .dwNtbOutMaxSize         = sys_cpu_to_le32(CFG_TUD_NCM_OUT_NTB_MAX_SIZE),
+    .wNdbOutDivisor          = sys_cpu_to_le16(4),
+    .wNdbOutPayloadRemainder = sys_cpu_to_le16(0),
+    .wNdbOutAlignment        = sys_cpu_to_le16(CFG_TUD_NCM_ALIGNMENT),
+    .wNtbOutMaxDatagrams     = sys_cpu_to_le16(1)                                     // TODO 0=no limit
 };
 
 
@@ -305,8 +297,8 @@ __aligned(4) static ncm_notify_network_connection_t ncm_notify_connected = {
                         .direction = USB_REQTYPE_DIR_TO_HOST
                 },
                 .bRequest = NCM_NOTIFICATION_NETWORK_CONNECTION,
-                .wValue   = 1 /* Connected */,
-                .wLength  = 0,
+                .wValue   = sys_cpu_to_le16(1) /* Connected */,
+                .wLength  = sys_cpu_to_le16(0),
         },
 };
 
@@ -318,10 +310,10 @@ __aligned(4) static ncm_notify_connection_speed_change_t ncm_notify_speed_change
                         .direction = USB_REQTYPE_DIR_TO_HOST
                 },
                 .bRequest = NCM_NOTIFICATION_CONNECTION_SPEED_CHANGE,
-                .wLength  = 8,
+                .wLength  = sys_cpu_to_le16(8),
         },
-        .downlink = 12000000,
-        .uplink   = 12000000,
+        .downlink = sys_cpu_to_le32(12000000),
+        .uplink   = sys_cpu_to_le32(12000000),
 };
 
 
