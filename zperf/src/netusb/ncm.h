@@ -31,11 +31,11 @@
 
 #ifndef CFG_TUD_NCM_IN_NTB_MAX_SIZE
     /// must be >> MTU
-    #define CFG_TUD_NCM_IN_NTB_MAX_SIZE        3200
+    #define CFG_TUD_NCM_IN_NTB_MAX_SIZE        3200                  // TODO ZZZ replace with Kconfig
 #endif
 #ifndef CFG_TUD_NCM_OUT_NTB_MAX_SIZE
     /// must be >> MTU
-    #define CFG_TUD_NCM_OUT_NTB_MAX_SIZE       3200
+    #define CFG_TUD_NCM_OUT_NTB_MAX_SIZE       3200                  // TODO ZZZ replace with Kconfig
 #endif
 
 #ifndef CFG_TUD_NCM_OUT_NTB_N
@@ -43,7 +43,7 @@
     /// 1  - good performance
     /// 2  - up to 30% more performance with iperf with small packets
     /// >2 - no performance gain
-    #define CFG_TUD_NCM_OUT_NTB_N              2
+    #define CFG_TUD_NCM_OUT_NTB_N              2                     // TODO ZZZ replace with Kconfig
 #endif
 
 #ifndef CFG_TUD_NCM_IN_NTB_N
@@ -53,12 +53,12 @@
     ///     happens from time to time with SystemView
     /// 3 - "tud_network_can_xmit: request blocked" never happens
     /// >2 - no performance gain
-    #define CFG_TUD_NCM_IN_NTB_N               3
+    #define CFG_TUD_NCM_IN_NTB_N               3                     // TODO ZZZ replace with Kconfig
 #endif
 
 #ifndef CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB
     /// this is for the transmission size for allocation of \a ndp16_datagram_t
-    #define CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB  8
+    #define CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB  8                     // TODO ZZZ replace with Kconfig
 #endif
 
 #ifndef CFG_TUD_NCM_ALIGNMENT
