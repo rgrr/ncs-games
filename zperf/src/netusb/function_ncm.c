@@ -268,9 +268,10 @@ typedef struct {
 
     // notification handling
     enum {
-        NOTIFICATION_SPEED,
-        NOTIFICATION_CONNECTED,
-        NOTIFICATION_DONE
+        NOTIFICATION_INIT = 0,
+        NOTIFICATION_SPEED_SENT,
+        NOTIFICATION_CONNECTED_SENT,
+        NOTIFICATION_DONE,
     } notification_xmit_state;                     //!< state of notification transmission
     bool        notification_xmit_is_running;      //!< notification is currently transmitted
 } ncm_interface_t;
@@ -498,7 +499,6 @@ static int ncm_custom_handler(struct usb_setup_packet *setup, int32_t *len, uint
 
                 case USB_SREQ_SET_CONFIGURATION: {
                     LOG_DBG("    USB_SREQ_SET_CONFIGURATION val:%d idx:%d len:%d", setup->wValue, setup->wIndex, setup->wLength);
-                    netusb_enable(&ncm_function);
                 }
                 return -EINVAL;
 
@@ -570,7 +570,7 @@ static int ncm_send(struct net_pkt *pkt)
 
     /* transfer data to host */
     ret = usb_transfer_sync(ncm_ep_data[NCM_IN_EP_IDX].ep_addr,
-                tx_buf, len, USB_TRANS_WRITE);
+                            tx_buf, len, USB_TRANS_WRITE);
     if (ret != len) {
         LOG_ERR("Transfer failure");
         return -EINVAL;
@@ -638,11 +638,12 @@ static int ncm_connect(bool connected)
 
     if (connected)
     {
+        // Init packet reception
         ncm_read_cb(ncm_ep_data[NCM_OUT_EP_IDX].ep_addr, 0, NULL);
     }
     else
     {
-        /* Cancel any transfer */
+        // Cancel any transfer
         usb_cancel_transfer(ncm_ep_data[NCM_OUT_EP_IDX].ep_addr);
         usb_cancel_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr);
     }
@@ -654,11 +655,28 @@ static int ncm_connect(bool connected)
 
 static inline void ncm_status_interface(const uint8_t *desc)
 /**
+ * Activate the interface.
  *
+ * \todo actually I do not understand what is going on here:  have to skip the first netusb_enable() to
+ *       get it working.  Also don't understand how to transfer \a ncm_notify_speed_change et al
  */
 {
 #if 0
+    const struct usb_if_descriptor *if_desc = (void *)desc;
+    uint8_t iface_num = if_desc->bInterfaceNumber;
+    uint8_t alt_set = if_desc->bAlternateSetting;
+    int ret;
+
+    LOG_DBG("iface %u alt_set %u", iface_num, if_desc->bAlternateSetting);
     LOG_DBG("%d %d", ncm_interface.notification_xmit_state, ncm_interface.notification_xmit_is_running);
+
+    if (alt_set == 0)
+    {
+        LOG_DBG("nop");
+//        if (ncm_interface.notification_xmit_state != NOTIFICATION_SPEED)
+//            netusb_enable(&ncm_function);
+        return;
+    }
 
 #if 0
     if ( !force_next  &&  ncm_interface.notification_xmit_is_running) {
@@ -667,9 +685,15 @@ static inline void ncm_status_interface(const uint8_t *desc)
 #endif
 
     if (ncm_interface.notification_xmit_state == NOTIFICATION_SPEED) {
+        netusb_enable(&ncm_function);
         LOG_DBG("  NOTIFICATION_SPEED");
         ncm_notify_speed_change.header.wIndex = ncm_interface.itf_num;
 //        usbd_edpt_xfer(rhport, ncm_interface.ep_notif, (uint8_t*) &ncm_notify_speed_change, sizeof(ncm_notify_speed_change));
+        ret = usb_transfer_sync(ncm_ep_data[NCM_INT_EP_IDX].ep_addr, (uint8_t *)&ncm_notify_speed_change, sizeof(ncm_notify_speed_change), USB_TRANS_WRITE);
+        if (ret != sizeof(ncm_notify_speed_change)) {
+            LOG_ERR("Transfer failure");
+            return;
+        }
         ncm_interface.notification_xmit_state = NOTIFICATION_CONNECTED;
         ncm_interface.notification_xmit_is_running = true;
     }
@@ -685,11 +709,7 @@ static inline void ncm_status_interface(const uint8_t *desc)
     }
 #endif
 
-#if 0
-    static const struct netusb_function ncm_function = {
-        .connect_media = ncm_connect,
-        .send_pkt = ncm_send,
-    };
+#if 1
     const struct usb_if_descriptor *if_desc = (void *)desc;
     uint8_t iface_num = if_desc->bInterfaceNumber;
     uint8_t alt_set = if_desc->bAlternateSetting;
@@ -697,11 +717,17 @@ static inline void ncm_status_interface(const uint8_t *desc)
     LOG_DBG("iface %u alt_set %u", iface_num, if_desc->bAlternateSetting);
 
     /* First interface is CDC Comm interface */
-    if (iface_num != ncm_get_first_iface_number() + 1 || !alt_set) {
+    if (iface_num != ncm_get_first_iface_number() + 1  ||  alt_set == 0) {
         LOG_DBG("Skip iface_num %u alt_set %u", iface_num, alt_set);
         return;
     }
 
+    if (ncm_interface.notification_xmit_state == NOTIFICATION_INIT)
+    {
+        ncm_interface.notification_xmit_state = NOTIFICATION_DONE;
+        LOG_DBG("Skip first iface enable");
+        return;
+    }
     netusb_enable(&ncm_function);
 #endif
 }   // ncm_status_interface
@@ -766,6 +792,8 @@ static void ncm_interface_config(struct usb_desc_header *head,
  */
 {
     ARG_UNUSED(head);
+
+    LOG_DBG("iface: %d", bInterfaceNumber);
 
     int idx = usb_get_str_descriptor_idx(&utf16le_mac);
     if (idx) {
