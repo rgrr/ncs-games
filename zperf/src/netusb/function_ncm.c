@@ -684,7 +684,7 @@ static void recv_transfer_datagram_to_glue_logic(void)
 //-----------------------------------------------------------------------------
 
 
-void xxx_tud_network_recv_renew(uint8_t ep)
+static void xxx_tud_network_recv_renew(uint8_t ep)
 /**
  * Keep the receive logic busy and transfer pending packets to the glue logic.
  */
@@ -694,9 +694,6 @@ void xxx_tud_network_recv_renew(uint8_t ep)
     recv_transfer_datagram_to_glue_logic();
     recv_try_to_start_new_reception(ep);
 }   // xxx_tud_network_recv_renew
-
-
-//-----------------------------------------------------------------------------
 
 
 static void xxx_netd_init(void)
@@ -717,6 +714,8 @@ static void xxx_netd_init(void)
     }
 }   // xxx_netd_init
 
+
+//-----------------------------------------------------------------------------
 
 
 static uint8_t ncm_get_first_iface_number(void)
