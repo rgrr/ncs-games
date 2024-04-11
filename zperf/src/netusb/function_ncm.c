@@ -156,10 +156,8 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
         .bDescriptorType = USB_DESC_ENDPOINT,
         .bEndpointAddress = CDC_NCM_INT_EP_ADDR,
         .bmAttributes = USB_DC_EP_INTERRUPT,
-        .wMaxPacketSize =
-            sys_cpu_to_le16(
-            CONFIG_CDC_ECM_INTERRUPT_EP_MPS),                        // TODO TinyUSB: 64
-        .bInterval = 0x09,                                           // TODO TinyUSB: 50
+        .wMaxPacketSize = sys_cpu_to_le16(CONFIG_CDC_ECM_INTERRUPT_EP_MPS),
+        .bInterval = 0x09,                                           // TODO TinyUSB: 64 & 50
     },
 
     // Interface descriptor 1/0
@@ -242,12 +240,12 @@ USBD_STRING_DESCR_USER_DEFINE(primary) struct usb_cdc_ncm_mac_descr utf16le_mac 
 
 typedef struct {
     // general
-    uint8_t     ep_in;                             //!< endpoint for outgoing datagrams (naming is a little bit confusing)
-    uint8_t     ep_out;                            //!< endpoint for incoming datagrams (naming is a little bit confusing)
-    uint8_t     ep_notif;                          //!< endpoint for notifications
-    uint8_t     itf_num;                           //!< interface number
-    uint8_t     itf_data_alt;                      //!< ==0 -> no endpoints, i.e. no network traffic, ==1 -> normal operation with two endpoints (spec, chapter 5.3)
-    uint8_t     rhport;                            //!< storage of \a rhport because some callbacks are done without it
+//    uint8_t     ep_in;                             //!< endpoint for outgoing datagrams (naming is a little bit confusing)
+//    uint8_t     ep_out;                            //!< endpoint for incoming datagrams (naming is a little bit confusing)
+//    uint8_t     ep_notif;                          //!< endpoint for notifications
+//    uint8_t     itf_num;                           //!< interface number
+//    uint8_t     itf_data_alt;                      //!< ==0 -> no endpoints, i.e. no network traffic, ==1 -> normal operation with two endpoints (spec, chapter 5.3)
+//    uint8_t     rhport;                            //!< storage of \a rhport because some callbacks are done without it
 
     // recv handling
     __aligned(4) recv_ntb_t recv_ntb[RECV_NTB_N];  //!< actual recv NTBs
@@ -268,12 +266,11 @@ typedef struct {
 
     // notification handling
     enum {
-        NOTIFICATION_INIT = 0,
-        NOTIFICATION_SPEED_SENT,
-        NOTIFICATION_CONNECTED_SENT,
-        NOTIFICATION_DONE,
-    } notification_xmit_state;                     //!< state of notification transmission
-    bool        notification_xmit_is_running;      //!< notification is currently transmitted
+        IF_STATE_INIT = 0,
+        IF_STATE_FIRST_SKIPPED,
+        IF_STATE_SPEED_SENT,
+        IF_STATE_DONE,
+    } if_state;                                    //!< interface state
 } ncm_interface_t;
 
 
@@ -303,7 +300,7 @@ __aligned(4) static const ntb_parameters_t ntb_parameters = {
 };
 
 
-__aligned(4) static ncm_notify_t ncm_notify_connected = {
+__aligned(4) static ncm_notify_network_connection_t ncm_notify_connected = {
         .header = {
                 .RequestType = {
                         .recipient = USB_REQTYPE_RECIPIENT_INTERFACE,
@@ -316,7 +313,7 @@ __aligned(4) static ncm_notify_t ncm_notify_connected = {
         },
 };
 
-__aligned(4) static ncm_notify_t ncm_notify_speed_change = {
+__aligned(4) static ncm_notify_connection_speed_change_t ncm_notify_speed_change = {
         .header = {
                 .RequestType = {
                         .recipient = USB_REQTYPE_RECIPIENT_INTERFACE,
@@ -362,26 +359,17 @@ static uint8_t ncm_get_first_iface_number(void)
 
 
 
-static void ncm_int_in(uint8_t ep, enum usb_dc_ep_cb_status_code ep_status)
-{
-    LOG_DBG("EP 0x%x status %d", ep, ep_status);
-}   // ncm_int_in
-
-
-
 static struct usb_ep_cfg_data ncm_ep_data[] = {
     /* Configuration NCM */
     {
-        .ep_cb = ncm_int_in,
+        .ep_cb = usb_transfer_ep_callback,
         .ep_addr = CDC_NCM_INT_EP_ADDR
     },
     {
-        /* high-level transfer mgmt */
         .ep_cb = usb_transfer_ep_callback,
         .ep_addr = CDC_NCM_OUT_EP_ADDR
     },
     {
-        /* high-level transfer mgmt */
         .ep_cb = usb_transfer_ep_callback,
         .ep_addr = CDC_NCM_IN_EP_ADDR
     },
@@ -633,6 +621,9 @@ done:
 
 
 static int ncm_connect(bool connected)
+/**
+ * Callback for connection status.
+ */
 {
     LOG_DBG("%d", connected);
 
@@ -653,63 +644,33 @@ static int ncm_connect(bool connected)
 
 
 
-static inline void ncm_status_interface(const uint8_t *desc)
+static void ncm_status_interface_cb(uint8_t ep, int tsize, void *priv)
 /**
- * Activate the interface.
+ * Callback for status packets.
  *
- * \todo actually I do not understand what is going on here:  have to skip the first netusb_enable() to
- *       get it working.  Also don't understand how to transfer \a ncm_notify_speed_change et al
+ * \note
+ *    Not sure if all this is correct, but there is at least some packet traffic ;-)
  */
 {
-#if 0
-    const struct usb_if_descriptor *if_desc = (void *)desc;
-    uint8_t iface_num = if_desc->bInterfaceNumber;
-    uint8_t alt_set = if_desc->bAlternateSetting;
-    int ret;
+    LOG_DBG("data transferred: %d %d %d", ep, tsize, ncm_interface.if_state);
 
-    LOG_DBG("iface %u alt_set %u", iface_num, if_desc->bAlternateSetting);
-    LOG_DBG("%d %d", ncm_interface.notification_xmit_state, ncm_interface.notification_xmit_is_running);
-
-    if (alt_set == 0)
+    if (ncm_interface.if_state == IF_STATE_SPEED_SENT)
     {
-        LOG_DBG("nop");
-//        if (ncm_interface.notification_xmit_state != NOTIFICATION_SPEED)
-//            netusb_enable(&ncm_function);
-        return;
-    }
+        ncm_interface.if_state = IF_STATE_DONE;
 
-#if 0
-    if ( !force_next  &&  ncm_interface.notification_xmit_is_running) {
-        return;
+        ncm_notify_connected.header.wIndex = ncm_get_first_iface_number();
+        usb_transfer(ncm_ep_data[NCM_INT_EP_IDX].ep_addr, (uint8_t *)&ncm_notify_connected, sizeof(ncm_notify_connected), USB_TRANS_WRITE,
+                ncm_status_interface_cb, NULL);
     }
-#endif
+}
 
-    if (ncm_interface.notification_xmit_state == NOTIFICATION_SPEED) {
-        netusb_enable(&ncm_function);
-        LOG_DBG("  NOTIFICATION_SPEED");
-        ncm_notify_speed_change.header.wIndex = ncm_interface.itf_num;
-//        usbd_edpt_xfer(rhport, ncm_interface.ep_notif, (uint8_t*) &ncm_notify_speed_change, sizeof(ncm_notify_speed_change));
-        ret = usb_transfer_sync(ncm_ep_data[NCM_INT_EP_IDX].ep_addr, (uint8_t *)&ncm_notify_speed_change, sizeof(ncm_notify_speed_change), USB_TRANS_WRITE);
-        if (ret != sizeof(ncm_notify_speed_change)) {
-            LOG_ERR("Transfer failure");
-            return;
-        }
-        ncm_interface.notification_xmit_state = NOTIFICATION_CONNECTED;
-        ncm_interface.notification_xmit_is_running = true;
-    }
-    else if (ncm_interface.notification_xmit_state == NOTIFICATION_CONNECTED) {
-        LOG_DBG("  NOTIFICATION_CONNECTED");
-        ncm_notify_connected.header.wIndex = ncm_interface.itf_num;
-//        usbd_edpt_xfer(rhport, ncm_interface.ep_notif, (uint8_t*) &ncm_notify_connected, sizeof(ncm_notify_connected));
-        ncm_interface.notification_xmit_state = NOTIFICATION_DONE;
-        ncm_interface.notification_xmit_is_running = true;
-    }
-    else {
-        LOG_DBG("  NOTIFICATION_FINISHED");
-    }
-#endif
 
-#if 1
+
+static void ncm_status_interface(const uint8_t *desc)
+/**
+ * Check interface activation.
+ */
+{
     const struct usb_if_descriptor *if_desc = (void *)desc;
     uint8_t iface_num = if_desc->bInterfaceNumber;
     uint8_t alt_set = if_desc->bAlternateSetting;
@@ -722,14 +683,19 @@ static inline void ncm_status_interface(const uint8_t *desc)
         return;
     }
 
-    if (ncm_interface.notification_xmit_state == NOTIFICATION_INIT)
+    if (ncm_interface.if_state == IF_STATE_INIT)
     {
-        ncm_interface.notification_xmit_state = NOTIFICATION_DONE;
+        ncm_interface.if_state = IF_STATE_FIRST_SKIPPED;
         LOG_DBG("Skip first iface enable");
         return;
     }
+
     netusb_enable(&ncm_function);
-#endif
+
+    ncm_interface.if_state = IF_STATE_SPEED_SENT;
+    ncm_notify_speed_change.header.wIndex = ncm_get_first_iface_number();
+    usb_transfer(ncm_ep_data[NCM_INT_EP_IDX].ep_addr, (uint8_t *)&ncm_notify_speed_change, sizeof(ncm_notify_speed_change), USB_TRANS_WRITE,
+                 ncm_status_interface_cb, NULL);
 }   // ncm_status_interface
 
 
@@ -739,14 +705,6 @@ static void ncm_status_cb(struct usb_cfg_data *cfg,
                           const uint8_t *param)
 {
     ARG_UNUSED(cfg);
-
-#if 0
-    printk("status: ");
-    for (int i = 0;  i < 10;  ++i) {
-        printk(" %02x", param[i]);
-    }
-    printk("\n");
-#endif
 
     /* Check the USB status and do needed action if required */
     switch (status) {
@@ -762,7 +720,7 @@ static void ncm_status_cb(struct usb_cfg_data *cfg,
 
         case USB_DC_RESET:
             LOG_DBG("USB_DC_RESET");
-            xxx_netd_init();           // TODO perhaps must be called also in other states
+            xxx_netd_init();
             break;
 
         case USB_DC_ERROR:

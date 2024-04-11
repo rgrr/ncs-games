@@ -159,7 +159,11 @@ typedef union __packed {
 typedef struct __packed {
     struct usb_setup_packet header;
     uint32_t                downlink, uplink;
-} ncm_notify_t;
+} ncm_notify_connection_speed_change_t;
+
+typedef struct __packed {
+    struct usb_setup_packet header;
+} ncm_notify_network_connection_t;
 
 
 #endif
