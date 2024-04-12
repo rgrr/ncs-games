@@ -510,19 +510,12 @@ static void xmit_start_if_possible(void)
     // Kick off an endpoint transfer
     int len = ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength;
 
-    // TODO remove
-//    if (len % CONFIG_CDC_ECM_BULK_EP_MPS == 0)
-//    {
-//        LOG_DBG("  added one byte");
-//        ++len;
-//    }
-
-    LOG_DBG("  kick off transfer: %d", len);
+    LOG_DBG("  kick off transfmission: %d", len);
     int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, ncm_interface.xmit_tinyusb_ntb->data,
                          len, USB_TRANS_WRITE, ncm_send_cb, NULL);
     if (r != 0)
     {
-        LOG_ERR("cannot start transmission: %d", r);
+        LOG_ERR("  cannot start transmission: %d", r);
     }
 }   // xmit_start_if_possible
 
@@ -902,7 +895,6 @@ static void recv_transfer_datagram_to_glue_logic(void)
 
             if (ok)
             {
-                LOG_DBG("  --- buff %d %d", datagramIndex, datagramLength);
                 if (net_pkt_write(pkt, ncm_interface.recv_glue_ntb->data + datagramIndex, datagramLength)) {
                     LOG_ERR("Unable to write into pkt");
                     net_pkt_unref(pkt);
@@ -1012,7 +1004,7 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
             else if (setup->bRequest == NCM_SET_ETHERNET_PACKET_FILTER)
             {
                 LOG_WRN("    NCM_SET_ETHERNET_PACKET_FILTER (not supported)");
-                return -ENOTSUP;
+                return 0;
             }
             else if (setup->bRequest == NCM_GET_NTB_INPUT_SIZE)
             {
