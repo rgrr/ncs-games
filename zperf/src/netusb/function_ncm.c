@@ -42,6 +42,8 @@ LOG_MODULE_REGISTER(usb_ncm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
 #include <zephyr/usb/class/usb_cdc.h>
 #include <usb_descriptor.h>
 
+#include <assert.h>
+
 #include "netusb.h"
 #include "ncm.h"
 
@@ -208,6 +210,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
 static int ncm_connect(bool connected);
 static int ncm_send(struct net_pkt *pkt);
 static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv);
+static void ncm_send_cb(uint8_t ep, int xferred_bytes, void *priv);
 
 
 static const struct netusb_function ncm_function = {
@@ -229,12 +232,15 @@ USBD_STRING_DESCR_USER_DEFINE(primary) struct usb_cdc_ncm_mac_descr utf16le_mac 
 };
 
 
-#define XMIT_NTB_N         CFG_TUD_NCM_IN_NTB_N
-#define RECV_NTB_N         CFG_TUD_NCM_OUT_NTB_N
+// calculate alignment of xmit datagrams within an NTB
+#define XMIT_ALIGN_OFFSET(x)   ((CFG_TUD_NCM_ALIGNMENT - ((x) & (CFG_TUD_NCM_ALIGNMENT - 1))) & (CFG_TUD_NCM_ALIGNMENT - 1))
+
+#define XMIT_NTB_N             CFG_TUD_NCM_IN_NTB_N
+#define RECV_NTB_N             CFG_TUD_NCM_OUT_NTB_N
 
 typedef struct {
     // general
-//    uint8_t     ep_in;                             //!< endpoint for outgoing datagrams (naming is a little bit confusing)
+//    uint8_t     ep_in;                             //!< endpoint for outgoing datagrams (naming is a little bit confusing) -> ncm_ep_data[NCM_IN_EP_IDX].ep_addr
 //    uint8_t     ep_out;                            //!< endpoint for incoming datagrams (naming is a little bit confusing) -> ncm_ep_data[NCM_OUT_EP_IDX].ep_addr
 //    uint8_t     ep_notif;                          //!< endpoint for notifications
 //    uint8_t     itf_num;                           //!< interface number
@@ -332,6 +338,245 @@ static struct usb_ep_cfg_data ncm_ep_data[] = {
         .ep_addr = CDC_NCM_IN_EP_ADDR
     },
 };
+
+
+//-----------------------------------------------------------------------------
+//
+// everything about packet transmission (driver -> TinyUSB)
+//
+
+
+static void xmit_put_ntb_into_free_list(xmit_ntb_t *free_ntb)
+/**
+ * Put NTB into the transmitter free list.
+ */
+{
+    LOG_DBG("%p", ncm_interface.xmit_tinyusb_ntb);
+
+    if (free_ntb == NULL) {
+        // can happen due to ZLPs
+        return;
+    }
+
+    for (int i = 0;  i < XMIT_NTB_N;  ++i) {
+        if (ncm_interface.xmit_free_ntb[i] == NULL) {
+            ncm_interface.xmit_free_ntb[i] = free_ntb;
+            return;
+        }
+    }
+    LOG_ERR("no entry in free list");  // this should not happen
+}   // xmit_put_ntb_into_free_list
+
+
+
+static xmit_ntb_t *xmit_get_free_ntb(void)
+/**
+ * Get an NTB from the free list
+ */
+{
+    LOG_DBG("");
+
+    for (int i = 0;  i < XMIT_NTB_N;  ++i) {
+        if (ncm_interface.xmit_free_ntb[i] != NULL) {
+            xmit_ntb_t *free = ncm_interface.xmit_free_ntb[i];
+            ncm_interface.xmit_free_ntb[i] = NULL;
+            return free;
+        }
+    }
+    return NULL;
+}   // xmit_get_free_ntb
+
+
+
+static void xmit_put_ntb_into_ready_list(xmit_ntb_t *ready_ntb)
+/**
+ * Put a filled NTB into the ready list
+ */
+{
+    LOG_DBG("(%p) %d", ready_ntb, ready_ntb->nth.wBlockLength);
+
+    for (int i = 0;  i < XMIT_NTB_N;  ++i) {
+        if (ncm_interface.xmit_ready_ntb[i] == NULL) {
+            ncm_interface.xmit_ready_ntb[i] = ready_ntb;
+            return;
+        }
+    }
+    LOG_ERR("ready list full");  // this should not happen
+}   // xmit_put_ntb_into_ready_list
+
+
+
+static xmit_ntb_t *xmit_get_next_ready_ntb(void)
+/**
+ * Get the next NTB from the ready list (and remove it from the list).
+ * If the ready list is empty, return NULL.
+ */
+{
+    xmit_ntb_t *r = NULL;
+
+    r = ncm_interface.xmit_ready_ntb[0];
+    memmove(ncm_interface.xmit_ready_ntb + 0, ncm_interface.xmit_ready_ntb + 1, sizeof(ncm_interface.xmit_ready_ntb) - sizeof(ncm_interface.xmit_ready_ntb[0]));
+    ncm_interface.xmit_ready_ntb[XMIT_NTB_N - 1] = NULL;
+
+    LOG_DBG("%p", r);
+    return r;
+}   // xmit_get_next_ready_ntb
+
+
+
+static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
+/**
+ * Transmit a ZLP if required
+ *
+ * \note
+ *    Insertion of the ZLPs is a little bit different then described in the spec.
+ *    But the below implementation actually works.  Don't know if this is a spec
+ *    or TinyUSB issue.
+ *
+ * \pre
+ *    This must be called from netd_xfer_cb() so that ep_in is ready
+ */
+{
+    LOG_DBG("(%u)", (unsigned)xferred_bytes);
+
+    if (xferred_bytes == 0  ||  xferred_bytes % CONFIG_CDC_ECM_BULK_EP_MPS != 0) {
+        return false;
+    }
+
+    assert(ncm_interface.itf_data_alt == 1);
+    assert( !usb_transfer_is_busy(ncm_ep_data[NCM_IN_EP_IDX].ep_addr));
+
+    LOG_DBG("  insert ZLP");
+
+    // start transmission of the ZLP
+    int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, NULL,
+                         0, USB_TRANS_WRITE, ncm_send_cb, NULL);
+    if (r != 0)
+    {
+        LOG_ERR("cannot start transmission: %d", r);
+    }
+
+    return true;
+}   // xmit_insert_required_zlp
+
+
+
+static void xmit_start_if_possible(void)
+/**
+ * Start transmission if it there is a waiting packet and if can be done from interface side.
+ */
+{
+    LOG_DBG("");
+
+    if (ncm_interface.xmit_tinyusb_ntb != NULL) {
+        LOG_DBG("  ncm_interface.xmit_tinyusb_ntb != NULL");
+        return;
+    }
+    if (ncm_interface.itf_data_alt != 1) {
+        LOG_ERR("  ncm_interface.itf_data_alt != 1");
+        return;
+    }
+    if (usb_transfer_is_busy(ncm_ep_data[NCM_IN_EP_IDX].ep_addr)) {
+        LOG_DBG("  usb_transfer_is_busy(ncm_ep_data[NCM_IN_EP_IDX].ep_addr)");
+        return;
+    }
+
+    ncm_interface.xmit_tinyusb_ntb = xmit_get_next_ready_ntb();
+    if (ncm_interface.xmit_tinyusb_ntb == NULL) {
+        if (ncm_interface.xmit_glue_ntb == NULL  ||  ncm_interface.xmit_glue_ntb_datagram_ndx == 0) {
+            // -> really nothing is waiting
+            LOG_DBG("  really nothing is waiting 000000000000");
+            return;
+        }
+        ncm_interface.xmit_tinyusb_ntb = ncm_interface.xmit_glue_ntb;
+        ncm_interface.xmit_glue_ntb = NULL;
+    }
+
+#ifdef DEBUG_OUT_ENABLED
+    {
+        uint16_t len = ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength;
+        DEBUG_OUT(" %d\n", len);
+        for (int i = 0;  i < len;  ++i) {
+            DEBUG_OUT(" %02x", ncm_interface.xmit_tinyusb_ntb->data[i]);
+        }
+        DEBUG_OUT("\n");
+    }
+#endif
+
+    if (ncm_interface.xmit_glue_ntb_datagram_ndx != 1) {
+        LOG_DBG(">> %d %d", ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength, ncm_interface.xmit_glue_ntb_datagram_ndx);
+    }
+
+    // Kick off an endpoint transfer
+    LOG_DBG("  kick off transfer: %d", ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength);
+    int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, ncm_interface.xmit_tinyusb_ntb->data,
+                         ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength, USB_TRANS_WRITE, ncm_send_cb, NULL);
+    if (r != 0)
+    {
+        LOG_ERR("cannot start transmission: %d", r);
+    }
+}   // xmit_start_if_possible
+
+
+
+static bool xmit_requested_datagram_fits_into_current_ntb(uint16_t datagram_size)
+/**
+ * check if a new datagram fits into the current NTB
+ */
+{
+    LOG_DBG("(%d) - %p %p", datagram_size, ncm_interface.xmit_tinyusb_ntb, ncm_interface.xmit_glue_ntb);
+
+    if (ncm_interface.xmit_glue_ntb == NULL) {
+        return false;
+    }
+    if (ncm_interface.xmit_glue_ntb_datagram_ndx >= CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB) {
+        return false;
+    }
+    if (ncm_interface.xmit_glue_ntb->nth.wBlockLength + datagram_size + XMIT_ALIGN_OFFSET(datagram_size) > CFG_TUD_NCM_OUT_NTB_MAX_SIZE) {
+        return false;
+    }
+    return true;
+}   // xmit_requested_datagram_fits_into_current_ntb
+
+
+
+static bool xmit_setup_next_glue_ntb(void)
+/**
+ * Setup an NTB for the glue logic
+ */
+{
+    LOG_DBG("%p", ncm_interface.xmit_glue_ntb);
+
+    if (ncm_interface.xmit_glue_ntb != NULL) {
+        // put NTB into waiting list (the new datagram did not fit in)
+        xmit_put_ntb_into_ready_list(ncm_interface.xmit_glue_ntb);
+    }
+
+    ncm_interface.xmit_glue_ntb = xmit_get_free_ntb();              // get next buffer (if any)
+    if (ncm_interface.xmit_glue_ntb == NULL) {
+        LOG_DBG("  ncm_interface.xmit_glue_ntb == NULL");           // should happen rarely
+        return false;
+    }
+
+    ncm_interface.xmit_glue_ntb_datagram_ndx = 0;
+
+    xmit_ntb_t *ntb = ncm_interface.xmit_glue_ntb;
+
+    // Fill in NTB header
+    ntb->nth.dwSignature   = NTH16_SIGNATURE;
+    ntb->nth.wHeaderLength = sizeof(ntb->nth);
+    ntb->nth.wSequence     = ncm_interface.xmit_sequence++;
+    ntb->nth.wBlockLength  = sizeof(ntb->nth) + sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram);
+    ntb->nth.wNdpIndex     = sizeof(ntb->nth);
+
+    // Fill in NDP16 header and terminator
+    ntb->ndp.dwSignature   = NDP16_SIGNATURE_NCM0;
+    ntb->ndp.wLength       = sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram);
+    ntb->ndp.wNextNdpIndex = 0;
+
+    memset(ntb->ndp_datagram, 0, sizeof(ntb->ndp_datagram));
+    return true;
+}   // xmit_setup_next_glue_ntb
 
 
 //-----------------------------------------------------------------------------
@@ -542,16 +787,16 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
     if (max_ndx > 2)
     {
         // number of datagrams in NTB > 1
-        LOG_INF("<< %d (%d)", max_ndx - 1, ntb->nth.wBlockLength);
+        LOG_DBG("<< %d (%d)", max_ndx - 1, ntb->nth.wBlockLength);
     }
     if (ndp16_datagram[max_ndx-1].wDatagramIndex != 0  ||  ndp16_datagram[max_ndx-1].wDatagramLength != 0)
     {
-        LOG_INF("  max_ndx != 0");
+        LOG_DBG("  max_ndx != 0");
         return false;
     }
     while (ndp16_datagram[ndx].wDatagramIndex != 0  &&  ndp16_datagram[ndx].wDatagramLength != 0)
     {
-        LOG_INF("  << %d %d", ndp16_datagram[ndx].wDatagramIndex, ndp16_datagram[ndx].wDatagramLength);
+        LOG_DBG("  << %d %d", ndp16_datagram[ndx].wDatagramIndex, ndp16_datagram[ndx].wDatagramLength);
         if (ndp16_datagram[ndx].wDatagramIndex > len)
         {
             LOG_ERR("(EE) ill start of datagram[%d]: %d (%d)", ndx, ndp16_datagram[ndx].wDatagramIndex, len);
@@ -781,7 +1026,7 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
     }
 
     if (setup->bRequest == NCM_SET_ETHERNET_PACKET_FILTER) {
-        LOG_INF("Set Interface %u Packet Filter 0x%04x not supported",
+        LOG_DBG("Set Interface %u Packet Filter 0x%04x not supported",
                 setup->wIndex, setup->wValue);
         return 0;
     }
@@ -885,52 +1130,88 @@ static size_t ncm_eth_size(void *ncm_pkt, size_t len)
 
 static int ncm_send(struct net_pkt *pkt)
 {
-    size_t len = net_pkt_get_len(pkt);
-    int ret;
+    size_t size = net_pkt_get_len(pkt);
+    int ret = -EINVAL;
 
-    LOG_DBG("len %d", len);
+    LOG_DBG("size %d", size);
 
-    if (VERBOSE_DEBUG) {
-        net_pkt_hexdump(pkt, "<");
+    NET_ASSERT(size <= CFG_TUD_NCM_OUT_NTB_MAX_SIZE - (sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)));
+
+    if (xmit_requested_datagram_fits_into_current_ntb(size)  ||  xmit_setup_next_glue_ntb())
+    {
+        // -> everything is fine
+        xmit_ntb_t *ntb = ncm_interface.xmit_glue_ntb;
+
+        // copy new datagram to the end of the current NTB
+        if (net_pkt_read(pkt, ntb->data + ntb->nth.wBlockLength, size))
+        {
+            return -ENOBUFS;
+        }
+
+        // correct NTB internals
+        ntb->ndp_datagram[ncm_interface.xmit_glue_ntb_datagram_ndx].wDatagramIndex  = ntb->nth.wBlockLength;
+        ntb->ndp_datagram[ncm_interface.xmit_glue_ntb_datagram_ndx].wDatagramLength = size;
+        ncm_interface.xmit_glue_ntb_datagram_ndx += 1;
+
+        ntb->nth.wBlockLength += (uint16_t)(size + XMIT_ALIGN_OFFSET(size));
+
+        NET_ASSERT(ntb->nth.wBlockLength <= CFG_TUD_NCM_OUT_NTB_MAX_SIZE);
+
+        ret = 0;
     }
-
-#if 0   // TODO
-    if (len > sizeof(tx_buf)) {
-        LOG_WRN("Trying to send too large packet, drop");
-        return -ENOMEM;
+    else
+    {
+        // cannot handle request -> just try to start transmission
+        LOG_DBG("  request blocked");     // could happen if all xmit buffers are full (but should happen rarely)
+        ret = -ENOBUFS;
     }
-
-    if (net_pkt_read(pkt, tx_buf, len)) {
-        return -ENOBUFS;
-    }
-
-    /* transfer data to host */
-    ret = usb_transfer_sync(ncm_ep_data[NCM_IN_EP_IDX].ep_addr,
-                            tx_buf, len, USB_TRANS_WRITE);
-    if (ret != len) {
-        LOG_ERR("Transfer failure");
-        return -EINVAL;
-    }
-#endif
-
-    return 0;
+    xmit_start_if_possible();
+    return ret;
 }   // ncm_send
 
 
 
-static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
+static void ncm_send_cb(uint8_t ep, int xferred_bytes, void *priv)
+/**
+ * transmission of an NTB finished
+ * - free the transmitted NTB buffer
+ * - insert ZLPs when necessary
+ * - if there is another transmit NTB waiting, try to start transmission
+ */
 {
-    LOG_DBG("size %d", xferred_bytes);
+    LOG_DBG("ep:0x%02x size:%d alt:%d", ep, xferred_bytes, ncm_interface.itf_data_alt);
+
+    xmit_put_ntb_into_free_list(ncm_interface.xmit_tinyusb_ntb);
+    ncm_interface.xmit_tinyusb_ntb = NULL;
+    if ( !xmit_insert_required_zlp(xferred_bytes))
+    {
+        xmit_start_if_possible();
+    }
+}   // ncm_send_cb
+
+
+
+static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
+/**
+ * new NTB received
+ * - make the NTB valid
+ * - if ready transfer datagrams to the glue logic for further processing
+ * - if there is a free receive buffer, initiate reception
+ */
+{
+    LOG_DBG("ep:0x%02x size:%d", ep, xferred_bytes);
 
     if (xferred_bytes == 0)
     {
         LOG_DBG("startup or ZLP received");
     }
-    else if ( !recv_validate_datagram(ncm_interface.recv_tinyusb_ntb, xferred_bytes)) {
+    else if ( !recv_validate_datagram(ncm_interface.recv_tinyusb_ntb, xferred_bytes))
+    {
         // verification failed: ignore NTB and return it to free
         LOG_ERR("VALIDATION FAILED. WHAT CAN WE DO IN THIS CASE?");
     }
-    else {
+    else
+    {
         // packet ok -> put it into ready list
         recv_put_ntb_into_ready_list(ncm_interface.recv_tinyusb_ntb);
     }
