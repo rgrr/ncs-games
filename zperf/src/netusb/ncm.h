@@ -29,43 +29,25 @@
 #define __NCM_H_
 
 
-#ifndef CFG_TUD_NCM_IN_NTB_MAX_SIZE
-    /// must be >> MTU
-    #define CFG_TUD_NCM_IN_NTB_MAX_SIZE        3200                  // TODO ZZZ replace with Kconfig
-#endif
-#ifndef CFG_TUD_NCM_OUT_NTB_MAX_SIZE
-    /// must be >> MTU
-    #define CFG_TUD_NCM_OUT_NTB_MAX_SIZE       3200                  // TODO ZZZ replace with Kconfig
-#endif
+/// CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE
+/// number of ntb buffers for reception side
+/// 1  - good performance
+/// 2  - up to 30% more performance with iperf with small packets
+/// >2 - no performance gain
 
-#ifndef CFG_TUD_NCM_OUT_NTB_N
-    /// number of ntb buffers for reception side
-    /// 1  - good performance
-    /// 2  - up to 30% more performance with iperf with small packets
-    /// >2 - no performance gain
-    #define CFG_TUD_NCM_OUT_NTB_N              2                     // TODO ZZZ replace with Kconfig
-#endif
+/// CONFIG_CDC_NCM_XMT_NTB_MAX_SIZE
+/// number of ntb buffers for transmission side
+/// 1 - good performance but SystemView shows lost events (on load test)
+/// 2 - up to 50% more performance with iperf with small packets, "tud_network_can_xmit: request blocked"
+///     happens from time to time with SystemView
+/// 3 - "tud_network_can_xmit: request blocked" never happens
+/// >2 - no performance gain
 
-#ifndef CFG_TUD_NCM_IN_NTB_N
-    /// number of ntb buffers for transmission side
-    /// 1 - good performance but SystemView shows lost events (on load test)
-    /// 2 - up to 50% more performance with iperf with small packets, "tud_network_can_xmit: request blocked"
-    ///     happens from time to time with SystemView
-    /// 3 - "tud_network_can_xmit: request blocked" never happens
-    /// >2 - no performance gain
-    #define CFG_TUD_NCM_IN_NTB_N               3                     // TODO ZZZ replace with Kconfig
+#ifndef CONFIG_CDC_NCM_ALIGNMENT
+    #define CONFIG_CDC_NCM_ALIGNMENT              4
 #endif
-
-#ifndef CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB
-    /// this is for the transmission size for allocation of \a ndp16_datagram_t
-    #define CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB  8                     // TODO ZZZ replace with Kconfig
-#endif
-
-#ifndef CFG_TUD_NCM_ALIGNMENT
-    #define CFG_TUD_NCM_ALIGNMENT              4
-#endif
-#if (CFG_TUD_NCM_ALIGNMENT != 4)
-    #error "CFG_TUD_NCM_ALIGNMENT must be 4, otherwise the headers and start of datagrams have to be aligned (which they are currently not)"
+#if (CONFIG_CDC_NCM_ALIGNMENT != 4)
+    #error "CONFIG_CDC_NCM_ALIGNMENT must be 4, otherwise the headers and start of datagrams have to be aligned (which they are currently not)"
 #endif
 
 
@@ -143,9 +125,9 @@ typedef union __packed {
     struct {
         nth16_t          nth;
         ndp16_t          ndp;
-        ndp16_datagram_t ndp_datagram[CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB + 1];
+        ndp16_datagram_t ndp_datagram[CONFIG_CDC_NCM_XMT_MAX_DATAGRAMS_PER_NTB + 1];
     };
-    uint8_t data[CFG_TUD_NCM_IN_NTB_MAX_SIZE];
+    uint8_t data[CONFIG_CDC_NCM_XMT_NTB_MAX_SIZE];
 } xmit_ntb_t;
 
 typedef union __packed {
@@ -153,7 +135,7 @@ typedef union __packed {
         nth16_t nth;
         // only the header is at a guaranteed position
     };
-    uint8_t data[CFG_TUD_NCM_OUT_NTB_MAX_SIZE];
+    uint8_t data[CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE];
 } recv_ntb_t;
 
 typedef struct __packed {
