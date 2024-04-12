@@ -118,6 +118,7 @@ void my_zperf_callback(enum zperf_status status,
 
 
 
+#if CONFIG_NET_DHCPV4_SERVER
 static void configure_dhcp_server(void)
 /**
  * Start DHCPv4 server
@@ -156,6 +157,7 @@ static void configure_dhcp_server(void)
         LOG_INF("DHCPv4 server started and pool address starts from %s", DHCPV4_POOL_START);
     }
 }   // configure_dhcp_server
+#endif
 
 
 
@@ -175,7 +177,9 @@ int main(void)
     //loopback_set_packet_drop_ratio(1);
 #endif
 
+#if CONFIG_NET_DHCPV4_SERVER
     configure_dhcp_server();
+#endif
 
 
     //

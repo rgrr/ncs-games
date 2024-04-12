@@ -508,9 +508,18 @@ static void xmit_start_if_possible(void)
     }
 
     // Kick off an endpoint transfer
-    LOG_DBG("  kick off transfer: %d", ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength);
+    int len = ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength;
+
+    // TODO remove
+//    if (len % CONFIG_CDC_ECM_BULK_EP_MPS == 0)
+//    {
+//        LOG_DBG("  added one byte");
+//        ++len;
+//    }
+
+    LOG_DBG("  kick off transfer: %d", len);
     int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, ncm_interface.xmit_tinyusb_ntb->data,
-                         ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength, USB_TRANS_WRITE, ncm_send_cb, NULL);
+                         len, USB_TRANS_WRITE, ncm_send_cb, NULL);
     if (r != 0)
     {
         LOG_ERR("cannot start transmission: %d", r);
@@ -893,6 +902,7 @@ static void recv_transfer_datagram_to_glue_logic(void)
 
             if (ok)
             {
+                LOG_DBG("  --- buff %d %d", datagramIndex, datagramLength);
                 if (net_pkt_write(pkt, ncm_interface.recv_glue_ntb->data + datagramIndex, datagramLength)) {
                     LOG_ERR("Unable to write into pkt");
                     net_pkt_unref(pkt);
@@ -903,9 +913,12 @@ static void recv_transfer_datagram_to_glue_logic(void)
             if (ok)
             {
                 //
-                // send datagram successfully to glue logic
+                // - send datagram to glue logic
+                // - switch to next datagram
                 //
                 LOG_DBG("    OK");
+                netusb_recv(pkt);
+
                 datagramIndex  = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx + 1].wDatagramIndex;
                 datagramLength = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx + 1].wDatagramLength;
 
@@ -934,7 +947,7 @@ static void xxx_tud_network_recv_renew(uint8_t ep)
  * Keep the receive logic busy and transfer pending packets to the glue logic.
  */
 {
-    LOG_DBG("");
+    LOG_DBG("0x%02x", ep);
 
     recv_transfer_datagram_to_glue_logic();
     recv_try_to_start_new_reception(ep);
@@ -987,7 +1000,7 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
             break;
 
         case USB_REQTYPE_TYPE_CLASS:
-            LOG_DBG("  USB_REQTYPE_TYPE_CLASS: %d", setup->bRequest);
+            LOG_DBG("  USB_REQTYPE_TYPE_CLASS: %d %d %d %d", setup->bRequest, setup->wLength, setup->wIndex, setup->wValue);
 
             if (setup->bRequest == NCM_GET_NTB_PARAMETERS)
             {
@@ -1008,7 +1021,8 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
             }
             else if (setup->bRequest == NCM_SET_NTB_INPUT_SIZE)
             {
-                LOG_ERR("    NCM_SET_NTB_INPUT_SIZE (not supported, but required)");
+                uint32_t **p = (uint32_t **)data;
+                LOG_ERR("    NCM_SET_NTB_INPUT_SIZE (not supported, but required), len:%u", (unsigned)**p);
                 return -ENOTSUP;
             }
             LOG_WRN("    not supported: %d", setup->bRequest);
