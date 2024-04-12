@@ -1050,68 +1050,6 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
 
 
 
-static int ncm_vendor_handler(struct usb_setup_packet *setup, int32_t *len, uint8_t **data)
-/**
- * Vendor handler.
- * Called for messages with \a USB_REQTYPE_TYPE_VENDOR
- */
-{
-    LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
-            *len, setup->bmRequestType, setup->bRequest,
-            netusb_enabled());
-
-    return -EINVAL;
-}   // ncm_vendor_handler
-
-
-
-static int ncm_custom_handler(struct usb_setup_packet *setup, int32_t *len, uint8_t **data)
-/**
- * Custom handler.
- * Called for messages with \a USB_REQTYPE_TYPE_STANDARD
- */
-{
-    LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
-            *len, setup->bmRequestType, setup->bRequest,
-            netusb_enabled());
-
-    switch (setup->RequestType.type)
-    {
-        case USB_REQTYPE_TYPE_STANDARD:
-            LOG_DBG("  USB_REQTYPE_TYPE_STANDARD: req:%d val:%d idx:%d len:ß%d", setup->bRequest, setup->wValue, setup->wIndex, setup->wLength);
-
-            switch (setup->bRequest)
-            {
-                case USB_SREQ_GET_INTERFACE: {
-                    LOG_DBG("    USB_SREQ_GET_INTERFACE");
-                }
-                break;
-
-                case USB_SREQ_SET_INTERFACE: {
-                    LOG_DBG("    USB_SREQ_SET_INTERFACE");
-                }
-                return -EINVAL;
-
-                case USB_SREQ_SET_CONFIGURATION: {
-                    LOG_DBG("    USB_SREQ_SET_CONFIGURATION val:%d idx:%d len:%d", setup->wValue, setup->wIndex, setup->wLength);
-                }
-                return -EINVAL;
-
-                // unsupported request
-                default:
-                    return -EINVAL;
-            }
-            break;
-
-        default:
-            return -EINVAL;
-    }
-
-    return -EINVAL;
-}   // ncm_custom_handler
-
-
-
 /* Retrieve expected pkt size from ethernet/ip header */
 static size_t ncm_eth_size(void *ncm_pkt, size_t len)
 {
@@ -1404,8 +1342,8 @@ USBD_DEFINE_CFG_DATA(cdc_ncm_config) = {
     .cb_usb_status = ncm_status_cb,
     .interface = {
         .class_handler = ncm_class_handler,
-        .custom_handler = ncm_custom_handler,
-        .vendor_handler = ncm_vendor_handler,
+        .custom_handler = NULL,
+        .vendor_handler = NULL,
     },
     .num_endpoints = ARRAY_SIZE(ncm_ep_data),
     .endpoint = ncm_ep_data,
