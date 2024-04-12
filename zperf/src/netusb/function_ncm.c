@@ -21,7 +21,6 @@
  *
  * Some explanations
  * -----------------
- * - rhport        is the USB port of the device, in most cases "0"
  * - itf_data_alt  if != 0 -> data xmit/recv are allowed (see spec)
  * - ep_in         IN endpoints take data from the device intended to go in to the host (the device transmits)
  * - ep_out        OUT endpoints send data out of the host to the device (the device receives)
@@ -239,29 +238,22 @@ USBD_STRING_DESCR_USER_DEFINE(primary) struct usb_cdc_ncm_mac_descr utf16le_mac 
 #define RECV_NTB_N             CONFIG_CDC_NCM_RCV_NTB_N
 
 typedef struct {
-    // general
-//    uint8_t     ep_in;                             //!< endpoint for outgoing datagrams (naming is a little bit confusing) -> ncm_ep_data[NCM_IN_EP_IDX].ep_addr
-//    uint8_t     ep_out;                            //!< endpoint for incoming datagrams (naming is a little bit confusing) -> ncm_ep_data[NCM_OUT_EP_IDX].ep_addr
-//    uint8_t     ep_notif;                          //!< endpoint for notifications
-//    uint8_t     itf_num;                           //!< interface number
-    uint8_t     itf_data_alt;                      //!< ==0 -> no endpoints, i.e. no network traffic, ==1 -> normal operation with two endpoints (spec, chapter 5.3)
-
     // recv handling
     __aligned(4) recv_ntb_t recv_ntb[RECV_NTB_N];  //!< actual recv NTBs
     recv_ntb_t *recv_free_ntb[RECV_NTB_N];         //!< free list of recv NTBs
-    recv_ntb_t *recv_ready_ntb[RECV_NTB_N];        //!< NTBs waiting for transmission to glue logic
-    recv_ntb_t *recv_tinyusb_ntb;                  //!< buffer for the running transfer TinyUSB -> driver
-    recv_ntb_t *recv_glue_ntb;                     //!< buffer for the running transfer driver -> glue logic
-    uint16_t    recv_glue_ntb_datagram_ndx;        //!< index into \a recv_glue_ntb_datagram
+    recv_ntb_t *recv_ready_ntb[RECV_NTB_N];        //!< NTBs waiting for transmission to netusb
+    recv_ntb_t *recv_usbdrv_ntb;                   //!< buffer for the running transfer usbdrv -> NCM driver
+    recv_ntb_t *recv_netusb_ntb;                   //!< buffer for the running transfer NCM driver -> netusb
+    uint16_t    recv_netusb_ntb_datagram_ndx;      //!< index into \a recv_netusb_ntb_datagram
 
     // xmit handling
     __aligned(4) xmit_ntb_t xmit_ntb[XMIT_NTB_N];  //!< actual xmit NTBs
     xmit_ntb_t *xmit_free_ntb[XMIT_NTB_N];         //!< free list of xmit NTBs
-    xmit_ntb_t *xmit_ready_ntb[XMIT_NTB_N];        //!< NTBs waiting for transmission to TinyUSB
-    xmit_ntb_t *xmit_tinyusb_ntb;                  //!< buffer for the running transfer driver -> TinyUSB
-    xmit_ntb_t *xmit_glue_ntb;                     //!< buffer for the running transfer glue logic -> driver
+    xmit_ntb_t *xmit_ready_ntb[XMIT_NTB_N];        //!< NTBs waiting for transmission to usbdrv
+    xmit_ntb_t *xmit_usbdrv_ntb;                   //!< buffer for the running transfer NCM driver -> usbdrv
+    xmit_ntb_t *xmit_netusb_ntb;                   //!< buffer for the running transfer netusb -> NCM driver
     uint16_t    xmit_sequence;                     //!< NTB sequence counter
-    uint16_t    xmit_glue_ntb_datagram_ndx;        //!< index into \a xmit_glue_ntb_datagram
+    uint16_t    xmit_netusb_ntb_datagram_ndx;      //!< index into \a xmit_netusb_ntb_datagram
 
     // notification handling
     enum {
@@ -270,6 +262,9 @@ typedef struct {
         IF_STATE_SPEED_SENT,
         IF_STATE_DONE,
     } if_state;                                    //!< interface state
+
+    // misc
+    uint8_t     itf_data_alt;                      //!< ==0 -> no endpoints, i.e. no network traffic, ==1 -> normal operation with two endpoints (spec, chapter 5.3)
 } ncm_interface_t;
 
 
@@ -342,7 +337,7 @@ static struct usb_ep_cfg_data ncm_ep_data[] = {
 
 //-----------------------------------------------------------------------------
 //
-// everything about packet transmission (driver -> TinyUSB)
+// everything about packet transmission (driver -> netusb)
 //
 
 
@@ -351,7 +346,7 @@ static void xmit_put_ntb_into_free_list(xmit_ntb_t *free_ntb)
  * Put NTB into the transmitter free list.
  */
 {
-    LOG_DBG("%p", ncm_interface.xmit_tinyusb_ntb);
+    LOG_DBG("%p", free_ntb);
 
     if (free_ntb == NULL) {
         // can happen due to ZLPs
@@ -430,8 +425,7 @@ static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
  *
  * \note
  *    Insertion of the ZLPs is a little bit different then described in the spec.
- *    But the below implementation actually works.  Don't know if this is a spec
- *    or TinyUSB issue.
+ *    But the below implementation actually works.
  *
  * \pre
  *    This must be called from netd_xfer_cb() so that ep_in is ready
@@ -468,8 +462,8 @@ static void xmit_start_if_possible(void)
 {
     LOG_DBG("");
 
-    if (ncm_interface.xmit_tinyusb_ntb != NULL) {
-        LOG_DBG("  ncm_interface.xmit_tinyusb_ntb != NULL");
+    if (ncm_interface.xmit_usbdrv_ntb != NULL) {
+        LOG_DBG("  ncm_interface.xmit_usbdrv_ntb != NULL");
         return;
     }
     if (ncm_interface.itf_data_alt != 1) {
@@ -481,37 +475,37 @@ static void xmit_start_if_possible(void)
         return;
     }
 
-    ncm_interface.xmit_tinyusb_ntb = xmit_get_next_ready_ntb();
-    if (ncm_interface.xmit_tinyusb_ntb == NULL) {
-        if (ncm_interface.xmit_glue_ntb == NULL  ||  ncm_interface.xmit_glue_ntb_datagram_ndx == 0) {
+    ncm_interface.xmit_usbdrv_ntb = xmit_get_next_ready_ntb();
+    if (ncm_interface.xmit_usbdrv_ntb == NULL) {
+        if (ncm_interface.xmit_netusb_ntb == NULL  ||  ncm_interface.xmit_netusb_ntb_datagram_ndx == 0) {
             // -> really nothing is waiting
-            LOG_DBG("  really nothing is waiting 000000000000");
+            LOG_DBG("  really nothing is waiting");
             return;
         }
-        ncm_interface.xmit_tinyusb_ntb = ncm_interface.xmit_glue_ntb;
-        ncm_interface.xmit_glue_ntb = NULL;
+        ncm_interface.xmit_usbdrv_ntb = ncm_interface.xmit_netusb_ntb;
+        ncm_interface.xmit_netusb_ntb = NULL;
     }
 
 #ifdef DEBUG_OUT_ENABLED
     {
-        uint16_t len = ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength;
+        uint16_t len = ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength;
         DEBUG_OUT(" %d\n", len);
         for (int i = 0;  i < len;  ++i) {
-            DEBUG_OUT(" %02x", ncm_interface.xmit_tinyusb_ntb->data[i]);
+            DEBUG_OUT(" %02x", ncm_interface.xmit_usbdrv_ntb->data[i]);
         }
         DEBUG_OUT("\n");
     }
 #endif
 
-    if (ncm_interface.xmit_glue_ntb_datagram_ndx != 1) {
-        LOG_DBG(">> %d %d", ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength, ncm_interface.xmit_glue_ntb_datagram_ndx);
+    if (ncm_interface.xmit_netusb_ntb_datagram_ndx != 1) {
+        LOG_DBG(">> %d %d", ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength, ncm_interface.xmit_netusb_ntb_datagram_ndx);
     }
 
     // Kick off an endpoint transfer
-    int len = ncm_interface.xmit_tinyusb_ntb->nth.wBlockLength;
+    int len = ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength;
 
-    LOG_DBG("  kick off transfmission: %d", len);
-    int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, ncm_interface.xmit_tinyusb_ntb->data,
+    LOG_DBG("  kick off transmission: %d", len);
+    int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, ncm_interface.xmit_usbdrv_ntb->data,
                          len, USB_TRANS_WRITE, ncm_send_cb, NULL);
     if (r != 0)
     {
@@ -526,15 +520,15 @@ static bool xmit_requested_datagram_fits_into_current_ntb(uint16_t datagram_size
  * check if a new datagram fits into the current NTB
  */
 {
-    LOG_DBG("(%d) - %p %p", datagram_size, ncm_interface.xmit_tinyusb_ntb, ncm_interface.xmit_glue_ntb);
+    LOG_DBG("(%d) - %p %p", datagram_size, ncm_interface.xmit_usbdrv_ntb, ncm_interface.xmit_netusb_ntb);
 
-    if (ncm_interface.xmit_glue_ntb == NULL) {
+    if (ncm_interface.xmit_netusb_ntb == NULL) {
         return false;
     }
-    if (ncm_interface.xmit_glue_ntb_datagram_ndx >= CONFIG_CDC_NCM_XMT_MAX_DATAGRAMS_PER_NTB) {
+    if (ncm_interface.xmit_netusb_ntb_datagram_ndx >= CONFIG_CDC_NCM_XMT_MAX_DATAGRAMS_PER_NTB) {
         return false;
     }
-    if (ncm_interface.xmit_glue_ntb->nth.wBlockLength + datagram_size + XMIT_ALIGN_OFFSET(datagram_size) > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE) {
+    if (ncm_interface.xmit_netusb_ntb->nth.wBlockLength + datagram_size + XMIT_ALIGN_OFFSET(datagram_size) > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE) {
         return false;
     }
     return true;
@@ -542,27 +536,27 @@ static bool xmit_requested_datagram_fits_into_current_ntb(uint16_t datagram_size
 
 
 
-static bool xmit_setup_next_glue_ntb(void)
+static bool xmit_setup_next_usbdrv_ntb(void)
 /**
- * Setup an NTB for the glue logic
+ * Setup an NTB for the USB driver
  */
 {
-    LOG_DBG("%p", ncm_interface.xmit_glue_ntb);
+    LOG_DBG("%p", ncm_interface.xmit_netusb_ntb);
 
-    if (ncm_interface.xmit_glue_ntb != NULL) {
+    if (ncm_interface.xmit_netusb_ntb != NULL) {
         // put NTB into waiting list (the new datagram did not fit in)
-        xmit_put_ntb_into_ready_list(ncm_interface.xmit_glue_ntb);
+        xmit_put_ntb_into_ready_list(ncm_interface.xmit_netusb_ntb);
     }
 
-    ncm_interface.xmit_glue_ntb = xmit_get_free_ntb();              // get next buffer (if any)
-    if (ncm_interface.xmit_glue_ntb == NULL) {
-        LOG_DBG("  ncm_interface.xmit_glue_ntb == NULL");           // should happen rarely
+    ncm_interface.xmit_netusb_ntb = xmit_get_free_ntb();              // get next buffer (if any)
+    if (ncm_interface.xmit_netusb_ntb == NULL) {
+        LOG_WRN("  ncm_interface.xmit_netusb_ntb == NULL");           // should happen rarely
         return false;
     }
 
-    ncm_interface.xmit_glue_ntb_datagram_ndx = 0;
+    ncm_interface.xmit_netusb_ntb_datagram_ndx = 0;
 
-    xmit_ntb_t *ntb = ncm_interface.xmit_glue_ntb;
+    xmit_ntb_t *ntb = ncm_interface.xmit_netusb_ntb;
 
     // Fill in NTB header
     ntb->nth.dwSignature   = NTH16_SIGNATURE;
@@ -578,12 +572,12 @@ static bool xmit_setup_next_glue_ntb(void)
 
     memset(ntb->ndp_datagram, 0, sizeof(ntb->ndp_datagram));
     return true;
-}   // xmit_setup_next_glue_ntb
+}   // xmit_setup_next_usbdrv_ntb
 
 
 //-----------------------------------------------------------------------------
 //
-// all the recv_*() stuff (TinyUSB -> driver -> glue logic)
+// all the recv_*() stuff (netusb -> NCM driver -> USB driver)
 //
 
 
@@ -670,8 +664,7 @@ static void recv_put_ntb_into_ready_list(recv_ntb_t *ready_ntb)
 
 static void recv_try_to_start_new_reception(uint8_t ep)
 /**
- * If possible, start a new reception TinyUSB -> driver.
- * Return value is actually not of interest.
+ * If possible, start a new reception usbdrv -> NCM.
  */
 {
     LOG_DBG("");
@@ -680,7 +673,7 @@ static void recv_try_to_start_new_reception(uint8_t ep)
     {
         return;
     }
-    if (ncm_interface.recv_tinyusb_ntb != NULL)
+    if (ncm_interface.recv_usbdrv_ntb != NULL)
     {
         return;
     }
@@ -689,21 +682,21 @@ static void recv_try_to_start_new_reception(uint8_t ep)
         return;
     }
 
-    ncm_interface.recv_tinyusb_ntb = recv_get_free_ntb();
-    if (ncm_interface.recv_tinyusb_ntb == NULL)
+    ncm_interface.recv_usbdrv_ntb = recv_get_free_ntb();
+    if (ncm_interface.recv_usbdrv_ntb == NULL)
     {
         return;
     }
 
     // initiate transfer
     LOG_DBG("  start reception");
-    int r = usb_transfer(ep, ncm_interface.recv_tinyusb_ntb->data,
+    int r = usb_transfer(ep, ncm_interface.recv_usbdrv_ntb->data,
                          CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE, USB_TRANS_READ, ncm_read_cb, NULL);
     if (r != 0)
     {
         LOG_ERR("cannot start reception: %d", r);
-        recv_put_ntb_into_free_list(ncm_interface.recv_tinyusb_ntb);
-        ncm_interface.recv_tinyusb_ntb = NULL;
+        recv_put_ntb_into_free_list(ncm_interface.recv_usbdrv_ntb);
+        ncm_interface.recv_usbdrv_ntb = NULL;
     }
 }   // recv_try_to_start_new_reception
 
@@ -827,9 +820,9 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
 
 
 
-static void recv_transfer_datagram_to_glue_logic(void)
+static void recv_transfer_datagram_to_netusb(void)
 /**
- * Transfer the next (pending) datagram to the glue logic and return receive buffer if empty.
+ * Transfer the next (pending) datagram to netusb and return receive buffer if empty.
  *
  * TODO this loop is very experimental.  Instead one should have information if a packet has been handled
  */
@@ -840,37 +833,37 @@ static void recv_transfer_datagram_to_glue_logic(void)
 
     for (;;)
     {
-        if (ncm_interface.recv_glue_ntb == NULL)
+        if (ncm_interface.recv_netusb_ntb == NULL)
         {
-            ncm_interface.recv_glue_ntb = recv_get_next_ready_ntb();
-            LOG_DBG("  new buffer for glue logic: %p", ncm_interface.recv_glue_ntb);
-            ncm_interface.recv_glue_ntb_datagram_ndx = 0;
+            ncm_interface.recv_netusb_ntb = recv_get_next_ready_ntb();
+            LOG_DBG("  new buffer for netusb: %p", ncm_interface.recv_netusb_ntb);
+            ncm_interface.recv_netusb_ntb_datagram_ndx = 0;
         }
 
-        if (ncm_interface.recv_glue_ntb == NULL  ||  !ok)
+        if (ncm_interface.recv_netusb_ntb == NULL  ||  !ok)
         {
             break;
         }
 
-        const ndp16_datagram_t *ndp16_datagram = (ndp16_datagram_t *)(ncm_interface.recv_glue_ntb->data
-                                                                    + ncm_interface.recv_glue_ntb->nth.wNdpIndex
+        const ndp16_datagram_t *ndp16_datagram = (ndp16_datagram_t *)(ncm_interface.recv_netusb_ntb->data
+                                                                    + ncm_interface.recv_netusb_ntb->nth.wNdpIndex
                                                                     + sizeof(ndp16_t));
 
-        if (ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx].wDatagramIndex == 0)
+        if (ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramIndex == 0)
         {
             LOG_ERR("  SOMETHING WENT WRONG 1");
         }
-        else if (ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx].wDatagramLength == 0)
+        else if (ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramLength == 0)
         {
             LOG_ERR("  SOMETHING WENT WRONG 2");
         }
         else
         {
-            uint16_t datagramIndex  = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx].wDatagramIndex;    // TODO endianess
-            uint16_t datagramLength = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx].wDatagramLength;
+            uint16_t datagramIndex  = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramIndex;    // TODO endianess
+            uint16_t datagramLength = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramLength;
             struct net_pkt *pkt;
 
-            LOG_DBG("  recv[%d] - %d %d", ncm_interface.recv_glue_ntb_datagram_ndx, datagramIndex, datagramLength);
+            LOG_DBG("  recv[%d] - %d %d", ncm_interface.recv_netusb_ntb_datagram_ndx, datagramIndex, datagramLength);
 
             if (datagramLength == 0)
             {
@@ -889,7 +882,7 @@ static void recv_transfer_datagram_to_glue_logic(void)
 
             if (ok)
             {
-                if (net_pkt_write(pkt, ncm_interface.recv_glue_ntb->data + datagramIndex, datagramLength)) {
+                if (net_pkt_write(pkt, ncm_interface.recv_netusb_ntb->data + datagramIndex, datagramLength)) {
                     LOG_ERR("Unable to write into pkt");
                     net_pkt_unref(pkt);
                     ok = false;
@@ -899,30 +892,30 @@ static void recv_transfer_datagram_to_glue_logic(void)
             if (ok)
             {
                 //
-                // - send datagram to glue logic
+                // - send datagram to netusb
                 // - switch to next datagram
                 //
                 LOG_DBG("    OK");
                 netusb_recv(pkt);
 
-                datagramIndex  = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx + 1].wDatagramIndex;
-                datagramLength = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx + 1].wDatagramLength;
+                datagramIndex  = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx + 1].wDatagramIndex;
+                datagramLength = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx + 1].wDatagramLength;
 
                 if (datagramIndex != 0  &&  datagramLength != 0)
                 {
                     // -> next datagram
-                    ++ncm_interface.recv_glue_ntb_datagram_ndx;
+                    ++ncm_interface.recv_netusb_ntb_datagram_ndx;
                 }
                 else
                 {
                     // end of datagrams reached
-                    recv_put_ntb_into_free_list(ncm_interface.recv_glue_ntb);
-                    ncm_interface.recv_glue_ntb = NULL;
+                    recv_put_ntb_into_free_list(ncm_interface.recv_netusb_ntb);
+                    ncm_interface.recv_netusb_ntb = NULL;
                 }
             }
         }
     }
-}   // recv_transfer_datagram_to_glue_logic
+}   // recv_transfer_datagram_to_netusb
 
 
 //-----------------------------------------------------------------------------
@@ -1031,10 +1024,10 @@ static int ncm_send(struct net_pkt *pkt)
 
     NET_ASSERT(size <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE - (sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)));
 
-    if (xmit_requested_datagram_fits_into_current_ntb(size)  ||  xmit_setup_next_glue_ntb())
+    if (xmit_requested_datagram_fits_into_current_ntb(size)  ||  xmit_setup_next_usbdrv_ntb())
     {
         // -> everything is fine
-        xmit_ntb_t *ntb = ncm_interface.xmit_glue_ntb;
+        xmit_ntb_t *ntb = ncm_interface.xmit_netusb_ntb;
 
         // copy new datagram to the end of the current NTB
         if (net_pkt_read(pkt, ntb->data + ntb->nth.wBlockLength, size))
@@ -1043,9 +1036,9 @@ static int ncm_send(struct net_pkt *pkt)
         }
 
         // correct NTB internals
-        ntb->ndp_datagram[ncm_interface.xmit_glue_ntb_datagram_ndx].wDatagramIndex  = ntb->nth.wBlockLength;
-        ntb->ndp_datagram[ncm_interface.xmit_glue_ntb_datagram_ndx].wDatagramLength = size;
-        ncm_interface.xmit_glue_ntb_datagram_ndx += 1;
+        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramIndex  = ntb->nth.wBlockLength;
+        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramLength = size;
+        ncm_interface.xmit_netusb_ntb_datagram_ndx += 1;
 
         ntb->nth.wBlockLength += (uint16_t)(size + XMIT_ALIGN_OFFSET(size));
 
@@ -1056,7 +1049,7 @@ static int ncm_send(struct net_pkt *pkt)
     else
     {
         // cannot handle request -> just try to start transmission
-        LOG_DBG("  request blocked");     // could happen if all xmit buffers are full (but should happen rarely)
+        LOG_WRN("  request blocked");     // could happen if all xmit buffers are full (but should happen rarely)
         ret = -ENOBUFS;
     }
     xmit_start_if_possible();
@@ -1075,8 +1068,8 @@ static void ncm_send_cb(uint8_t ep, int xferred_bytes, void *priv)
 {
     LOG_DBG("ep:0x%02x size:%d alt:%d", ep, xferred_bytes, ncm_interface.itf_data_alt);
 
-    xmit_put_ntb_into_free_list(ncm_interface.xmit_tinyusb_ntb);
-    ncm_interface.xmit_tinyusb_ntb = NULL;
+    xmit_put_ntb_into_free_list(ncm_interface.xmit_usbdrv_ntb);
+    ncm_interface.xmit_usbdrv_ntb = NULL;
     if ( !xmit_insert_required_zlp(xferred_bytes))
     {
         xmit_start_if_possible();
@@ -1089,7 +1082,7 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
 /**
  * new NTB received
  * - make the NTB valid
- * - if ready transfer datagrams to the glue logic for further processing
+ * - if ready transfer datagrams to netusb for further processing
  * - if there is a free receive buffer, initiate reception
  */
 {
@@ -1099,7 +1092,7 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
     {
         LOG_DBG("startup or ZLP received");
     }
-    else if ( !recv_validate_datagram(ncm_interface.recv_tinyusb_ntb, xferred_bytes))
+    else if ( !recv_validate_datagram(ncm_interface.recv_usbdrv_ntb, xferred_bytes))
     {
         // verification failed: ignore NTB and return it to free
         LOG_ERR("VALIDATION FAILED. WHAT CAN WE DO IN THIS CASE?");
@@ -1107,12 +1100,12 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
     else
     {
         // packet ok -> put it into ready list
-        recv_put_ntb_into_ready_list(ncm_interface.recv_tinyusb_ntb);
+        recv_put_ntb_into_ready_list(ncm_interface.recv_usbdrv_ntb);
     }
-    ncm_interface.recv_tinyusb_ntb = NULL;
+    ncm_interface.recv_usbdrv_ntb = NULL;
 
     // restart reception
-    recv_transfer_datagram_to_glue_logic();
+    recv_transfer_datagram_to_netusb();
     recv_try_to_start_new_reception(ep);
 }   // ncm_read_cb
 
