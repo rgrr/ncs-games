@@ -54,9 +54,46 @@ menu "My USB Device Networking support"
                 the Host's Operating System. Use RFC 7042 Documentation values as
                 default MAC.
     
-    endif # USB_DEVICE_NETWORK_MY_ECM
+    endif # USB_DEVICE_NETWORK_MY_ECM  ||  USB_DEVICE_NETWORK_MY_NCM
 
     
+    if USB_DEVICE_NETWORK_MY_NCM
+    
+        config CDC_NCM_XMT_NTB_MAX_SIZE
+            int
+            default 3200
+            help
+                Size of the NCM buffers for transmission (must be > MTU)
+        
+        config CDC_NCM_XMT_NTB_N
+            int
+            default 2
+            help
+                Number of NCM buffers for transmission
+
+        
+        config CDC_NCM_XMT_MAX_DATAGRAMS_PER_NTB
+            int
+            default 8
+            help
+                Number of datagrams in an NCM buffer
+
+        
+        config CDC_NCM_RCV_NTB_MAX_SIZE
+            int
+            default 3200
+            help
+                Size of the NCM buffers for reception (must be > MTU)
+        
+        config CDC_NCM_RCV_NTB_N
+            int
+            default 2
+            help
+                Number of NCM buffers for reception
+        
+    endif # USB_DEVICE_NETWORK_MY_NCM
+
+
     if USB_DEVICE_NETWORK
         
         module = USB_DEVICE_NETWORK

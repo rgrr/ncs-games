@@ -155,7 +155,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
         .bEndpointAddress = CDC_NCM_INT_EP_ADDR,
         .bmAttributes = USB_DC_EP_INTERRUPT,
         .wMaxPacketSize = sys_cpu_to_le16(CONFIG_CDC_ECM_INTERRUPT_EP_MPS),
-        .bInterval = 0x09,                                           // TODO TinyUSB: 64 & 50
+        .bInterval = 0x09,
     },
 
     // Interface descriptor 1/0
@@ -181,7 +181,7 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
         .bAlternateSetting = 1,
         .bNumEndpoints = 2,
         .bInterfaceClass = USB_BCC_CDC_DATA,
-        .bInterfaceSubClass = 0,                                     // TODO was: ECM_SUBCLASS,
+        .bInterfaceSubClass = 0,
         .bInterfaceProtocol = NCM_DATA_PROTOCOL_NETWORK_TRANSFER_BLOCK,
         .iInterface = 0,
     },
@@ -233,10 +233,10 @@ USBD_STRING_DESCR_USER_DEFINE(primary) struct usb_cdc_ncm_mac_descr utf16le_mac 
 
 
 // calculate alignment of xmit datagrams within an NTB
-#define XMIT_ALIGN_OFFSET(x)   ((CFG_TUD_NCM_ALIGNMENT - ((x) & (CFG_TUD_NCM_ALIGNMENT - 1))) & (CFG_TUD_NCM_ALIGNMENT - 1))
+#define XMIT_ALIGN_OFFSET(x)   ((CONFIG_CDC_NCM_ALIGNMENT - ((x) & (CONFIG_CDC_NCM_ALIGNMENT - 1))) & (CONFIG_CDC_NCM_ALIGNMENT - 1))
 
-#define XMIT_NTB_N             CFG_TUD_NCM_IN_NTB_N
-#define RECV_NTB_N             CFG_TUD_NCM_OUT_NTB_N
+#define XMIT_NTB_N             CONFIG_CDC_NCM_XMT_NTB_N
+#define RECV_NTB_N             CONFIG_CDC_NCM_RCV_NTB_N
 
 typedef struct {
     // general
@@ -282,16 +282,16 @@ __aligned(4) static ncm_interface_t ncm_interface;
 __aligned(4) static const ntb_parameters_t ntb_parameters = {
     .wLength                 = sys_cpu_to_le16(sizeof(ntb_parameters_t)),
     .bmNtbFormatsSupported   = sys_cpu_to_le16(0x01),                                 // 16-bit NTB supported
-    .dwNtbInMaxSize          = sys_cpu_to_le32(CFG_TUD_NCM_IN_NTB_MAX_SIZE),
+    .dwNtbInMaxSize          = sys_cpu_to_le32(CONFIG_CDC_NCM_XMT_NTB_MAX_SIZE),
     .wNdbInDivisor           = sys_cpu_to_le16(4),
     .wNdbInPayloadRemainder  = sys_cpu_to_le16(0),
-    .wNdbInAlignment         = sys_cpu_to_le16(CFG_TUD_NCM_ALIGNMENT),
+    .wNdbInAlignment         = sys_cpu_to_le16(CONFIG_CDC_NCM_ALIGNMENT),
     .wReserved               = sys_cpu_to_le16(0),
-    .dwNtbOutMaxSize         = sys_cpu_to_le32(CFG_TUD_NCM_OUT_NTB_MAX_SIZE),
+    .dwNtbOutMaxSize         = sys_cpu_to_le32(CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE),
     .wNdbOutDivisor          = sys_cpu_to_le16(4),
     .wNdbOutPayloadRemainder = sys_cpu_to_le16(0),
-    .wNdbOutAlignment        = sys_cpu_to_le16(CFG_TUD_NCM_ALIGNMENT),
-    .wNtbOutMaxDatagrams     = sys_cpu_to_le16(1)                                     // TODO 0=no limit
+    .wNdbOutAlignment        = sys_cpu_to_le16(CONFIG_CDC_NCM_ALIGNMENT),
+    .wNtbOutMaxDatagrams     = sys_cpu_to_le16(6)                                     // TODO 0=no limit
 };
 
 
@@ -531,10 +531,10 @@ static bool xmit_requested_datagram_fits_into_current_ntb(uint16_t datagram_size
     if (ncm_interface.xmit_glue_ntb == NULL) {
         return false;
     }
-    if (ncm_interface.xmit_glue_ntb_datagram_ndx >= CFG_TUD_NCM_MAX_DATAGRAMS_PER_NTB) {
+    if (ncm_interface.xmit_glue_ntb_datagram_ndx >= CONFIG_CDC_NCM_XMT_MAX_DATAGRAMS_PER_NTB) {
         return false;
     }
-    if (ncm_interface.xmit_glue_ntb->nth.wBlockLength + datagram_size + XMIT_ALIGN_OFFSET(datagram_size) > CFG_TUD_NCM_OUT_NTB_MAX_SIZE) {
+    if (ncm_interface.xmit_glue_ntb->nth.wBlockLength + datagram_size + XMIT_ALIGN_OFFSET(datagram_size) > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE) {
         return false;
     }
     return true;
@@ -590,7 +590,7 @@ static bool xmit_setup_next_glue_ntb(void)
 static recv_ntb_t *recv_get_free_ntb(void)
 /**
  * Return pointer to an available receive buffer or NULL.
- * Returned buffer (if any) has the size \a CFG_TUD_NCM_OUT_NTB_MAX_SIZE.
+ * Returned buffer (if any) has the size \a CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE.
  */
 {
     LOG_DBG("");
@@ -698,7 +698,7 @@ static void recv_try_to_start_new_reception(uint8_t ep)
     // initiate transfer
     LOG_DBG("  start reception");
     int r = usb_transfer(ep, ncm_interface.recv_tinyusb_ntb->data,
-                         CFG_TUD_NCM_OUT_NTB_MAX_SIZE, USB_TRANS_READ, ncm_read_cb, NULL);
+                         CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE, USB_TRANS_READ, ncm_read_cb, NULL);
     if (r != 0)
     {
         LOG_ERR("cannot start reception: %d", r);
@@ -750,9 +750,9 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
         LOG_ERR("  ill block length: %d > %d", nth16->wBlockLength, len);
         return false;
     }
-    if (nth16->wBlockLength > CFG_TUD_NCM_OUT_NTB_MAX_SIZE)
+    if (nth16->wBlockLength > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE)
     {
-        LOG_ERR("  ill block length2: %d > %d", nth16->wBlockLength, CFG_TUD_NCM_OUT_NTB_MAX_SIZE);
+        LOG_ERR("  ill block length2: %d > %d", nth16->wBlockLength, CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
         return false;
     }
     if (nth16->wNdpIndex < sizeof(nth16)  ||  nth16->wNdpIndex > len - (sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)))
@@ -789,7 +789,7 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
     if (max_ndx > 2)
     {
         // number of datagrams in NTB > 1
-        LOG_DBG("<< %d (%d)", max_ndx - 1, ntb->nth.wBlockLength);
+        LOG_WRN("<<xyx %d (%d)", max_ndx - 1, ntb->nth.wBlockLength);
     }
     if (ndp16_datagram[max_ndx-1].wDatagramIndex != 0  ||  ndp16_datagram[max_ndx-1].wDatagramLength != 0)
     {
@@ -830,19 +830,28 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
 static void recv_transfer_datagram_to_glue_logic(void)
 /**
  * Transfer the next (pending) datagram to the glue logic and return receive buffer if empty.
+ *
+ * TODO this loop is very experimental.  Instead one should have information if a packet has been handled
  */
 {
+    bool ok = true;
+
     LOG_DBG("");
 
-    if (ncm_interface.recv_glue_ntb == NULL)
+    for (;;)
     {
-        ncm_interface.recv_glue_ntb = recv_get_next_ready_ntb();
-        LOG_DBG("  new buffer for glue logic: %p", ncm_interface.recv_glue_ntb);
-        ncm_interface.recv_glue_ntb_datagram_ndx = 0;
-    }
+        if (ncm_interface.recv_glue_ntb == NULL)
+        {
+            ncm_interface.recv_glue_ntb = recv_get_next_ready_ntb();
+            LOG_DBG("  new buffer for glue logic: %p", ncm_interface.recv_glue_ntb);
+            ncm_interface.recv_glue_ntb_datagram_ndx = 0;
+        }
 
-    if (ncm_interface.recv_glue_ntb != NULL)
-    {
+        if (ncm_interface.recv_glue_ntb == NULL  ||  !ok)
+        {
+            break;
+        }
+
         const ndp16_datagram_t *ndp16_datagram = (ndp16_datagram_t *)(ncm_interface.recv_glue_ntb->data
                                                                     + ncm_interface.recv_glue_ntb->nth.wNdpIndex
                                                                     + sizeof(ndp16_t));
@@ -860,7 +869,6 @@ static void recv_transfer_datagram_to_glue_logic(void)
             uint16_t datagramIndex  = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx].wDatagramIndex;    // TODO endianess
             uint16_t datagramLength = ndp16_datagram[ncm_interface.recv_glue_ntb_datagram_ndx].wDatagramLength;
             struct net_pkt *pkt;
-            bool ok = true;
 
             LOG_DBG("  recv[%d] - %d %d", ncm_interface.recv_glue_ntb_datagram_ndx, datagramIndex, datagramLength);
 
@@ -868,20 +876,6 @@ static void recv_transfer_datagram_to_glue_logic(void)
             {
                 ok = false;
             }
-
-#if 0
-            /* Linux considers by default that network usb device controllers are
-             * not able to handle Zero Length Packet (ZLP) and then generates
-             * a short packet containing a null byte. Handle by checking the IP
-             * header length and dropping the extra byte.
-             */
-            if (rx_buf[size - 1] == 0U) { /* last byte is null */
-                if (ncm_eth_size(rx_buf, size) == (size - 1)) {
-                    /* last byte has been appended as delimiter, drop it */
-                    size--;
-                }
-            }
-#endif
 
             if (ok)
             {
@@ -934,19 +928,7 @@ static void recv_transfer_datagram_to_glue_logic(void)
 //-----------------------------------------------------------------------------
 
 
-static void xxx_tud_network_recv_renew(uint8_t ep)
-/**
- * Keep the receive logic busy and transfer pending packets to the glue logic.
- */
-{
-    LOG_DBG("0x%02x", ep);
-
-    recv_transfer_datagram_to_glue_logic();
-    recv_try_to_start_new_reception(ep);
-}   // xxx_tud_network_recv_renew
-
-
-static void xxx_netd_init(void)
+static void ncm_init(void)
 /**
  * Initialize the driver data structures.
  * Might be called several times.
@@ -962,10 +944,8 @@ static void xxx_netd_init(void)
     for (int i = 0;  i < RECV_NTB_N;  ++i) {
         ncm_interface.recv_free_ntb[i] = ncm_interface.recv_ntb + i;
     }
-}   // xxx_netd_init
+}   // ncm_init
 
-
-//-----------------------------------------------------------------------------
 
 
 static uint8_t ncm_get_first_iface_number(void)
@@ -1042,36 +1022,6 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
 
 
 
-/* Retrieve expected pkt size from ethernet/ip header */
-static size_t ncm_eth_size(void *ncm_pkt, size_t len)
-{
-    struct net_eth_hdr *hdr = (void *)ncm_pkt;
-    uint8_t *ip_data = (uint8_t *)ncm_pkt + sizeof(struct net_eth_hdr);
-    uint16_t ip_len;
-
-    if (len < NET_IPV6H_LEN + sizeof(struct net_eth_hdr)) {
-        /* Too short */
-        return 0;
-    }
-
-    switch (ntohs(hdr->type)) {
-    case NET_ETH_PTYPE_IP:
-    case NET_ETH_PTYPE_ARP:
-        ip_len = ntohs(((struct net_ipv4_hdr *)ip_data)->len);
-        break;
-    case NET_ETH_PTYPE_IPV6:
-        ip_len = ntohs(((struct net_ipv6_hdr *)ip_data)->len);
-        break;
-    default:
-        LOG_DBG("Unknown hdr type 0x%04x", hdr->type);
-        return 0;
-    }
-
-    return sizeof(struct net_eth_hdr) + ip_len;
-}   // ncm_eth_size
-
-
-
 static int ncm_send(struct net_pkt *pkt)
 {
     size_t size = net_pkt_get_len(pkt);
@@ -1079,7 +1029,7 @@ static int ncm_send(struct net_pkt *pkt)
 
     LOG_DBG("size %d", size);
 
-    NET_ASSERT(size <= CFG_TUD_NCM_OUT_NTB_MAX_SIZE - (sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)));
+    NET_ASSERT(size <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE - (sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)));
 
     if (xmit_requested_datagram_fits_into_current_ntb(size)  ||  xmit_setup_next_glue_ntb())
     {
@@ -1099,7 +1049,7 @@ static int ncm_send(struct net_pkt *pkt)
 
         ntb->nth.wBlockLength += (uint16_t)(size + XMIT_ALIGN_OFFSET(size));
 
-        NET_ASSERT(ntb->nth.wBlockLength <= CFG_TUD_NCM_OUT_NTB_MAX_SIZE);
+        NET_ASSERT(ntb->nth.wBlockLength <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
 
         ret = 0;
     }
@@ -1161,7 +1111,9 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
     }
     ncm_interface.recv_tinyusb_ntb = NULL;
 
-    xxx_tud_network_recv_renew(ep);
+    // restart reception
+    recv_transfer_datagram_to_glue_logic();
+    recv_try_to_start_new_reception(ep);
 }   // ncm_read_cb
 
 
@@ -1278,7 +1230,7 @@ static void ncm_status_cb(struct usb_cfg_data *cfg,
 
         case USB_DC_RESET:
             LOG_DBG("USB_DC_RESET");
-            xxx_netd_init();
+            ncm_init();
             break;
 
         case USB_DC_ERROR:
