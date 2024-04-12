@@ -86,6 +86,7 @@ typedef enum
 #define NDP16_SIGNATURE_NCM0 0x304D434E
 #define NDP16_SIGNATURE_NCM1 0x314D434E
 
+// network endianess = LE!
 typedef struct __packed {
     uint16_t wLength;
     uint16_t bmNtbFormatsSupported;
@@ -101,6 +102,7 @@ typedef struct __packed {
     uint16_t wNtbOutMaxDatagrams;
 } ntb_parameters_t;
 
+// network endianess = LE!
 typedef struct __packed {
     uint32_t dwSignature;
     uint16_t wHeaderLength;
@@ -109,11 +111,13 @@ typedef struct __packed {
     uint16_t wNdpIndex;
 } nth16_t;
 
+// network endianess = LE!
 typedef struct __packed {
     uint16_t wDatagramIndex;
     uint16_t wDatagramLength;
 } ndp16_datagram_t;
 
+// network endianess = LE!
 typedef struct __packed {
     uint32_t dwSignature;
     uint16_t wLength;
@@ -138,11 +142,13 @@ typedef union __packed {
     uint8_t data[CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE];
 } recv_ntb_t;
 
+// network endianess = LE!
 typedef struct __packed {
     struct usb_setup_packet header;
     uint32_t                downlink, uplink;
 } ncm_notify_connection_speed_change_t;
 
+// network endianess = LE!
 typedef struct __packed {
     struct usb_setup_packet header;
 } ncm_notify_network_connection_t;

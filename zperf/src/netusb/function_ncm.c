@@ -286,7 +286,7 @@ __aligned(4) static const ntb_parameters_t ntb_parameters = {
     .wNdbOutDivisor          = sys_cpu_to_le16(4),
     .wNdbOutPayloadRemainder = sys_cpu_to_le16(0),
     .wNdbOutAlignment        = sys_cpu_to_le16(CONFIG_CDC_NCM_ALIGNMENT),
-    .wNtbOutMaxDatagrams     = sys_cpu_to_le16(6)                                     // TODO 0=no limit
+    .wNtbOutMaxDatagrams     = sys_cpu_to_le16(CONFIG_CDC_NCM_RCV_MAX_DATAGRAMS_PER_NTB)
 };
 
 
@@ -388,7 +388,7 @@ static void xmit_put_ntb_into_ready_list(xmit_ntb_t *ready_ntb)
  * Put a filled NTB into the ready list
  */
 {
-    LOG_DBG("(%p) %d", ready_ntb, ready_ntb->nth.wBlockLength);
+    LOG_DBG("(%p) %d", ready_ntb, sys_le16_to_cpu(ready_ntb->nth.wBlockLength));
 
     for (int i = 0;  i < XMIT_NTB_N;  ++i) {
         if (ncm_interface.xmit_ready_ntb[i] == NULL) {
@@ -488,7 +488,7 @@ static void xmit_start_if_possible(void)
 
 #ifdef DEBUG_OUT_ENABLED
     {
-        uint16_t len = ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength;
+        uint16_t len = sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength);
         DEBUG_OUT(" %d\n", len);
         for (int i = 0;  i < len;  ++i) {
             DEBUG_OUT(" %02x", ncm_interface.xmit_usbdrv_ntb->data[i]);
@@ -498,11 +498,11 @@ static void xmit_start_if_possible(void)
 #endif
 
     if (ncm_interface.xmit_netusb_ntb_datagram_ndx != 1) {
-        LOG_DBG(">> %d %d", ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength, ncm_interface.xmit_netusb_ntb_datagram_ndx);
+        LOG_DBG(">> %d %d", sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength), ncm_interface.xmit_netusb_ntb_datagram_ndx);
     }
 
     // Kick off an endpoint transfer
-    int len = ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength;
+    int len = sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength);
 
     LOG_DBG("  kick off transmission: %d", len);
     int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, ncm_interface.xmit_usbdrv_ntb->data,
@@ -528,7 +528,7 @@ static bool xmit_requested_datagram_fits_into_current_ntb(uint16_t datagram_size
     if (ncm_interface.xmit_netusb_ntb_datagram_ndx >= CONFIG_CDC_NCM_XMT_MAX_DATAGRAMS_PER_NTB) {
         return false;
     }
-    if (ncm_interface.xmit_netusb_ntb->nth.wBlockLength + datagram_size + XMIT_ALIGN_OFFSET(datagram_size) > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE) {
+    if (sys_le16_to_cpu(ncm_interface.xmit_netusb_ntb->nth.wBlockLength) + datagram_size + XMIT_ALIGN_OFFSET(datagram_size) > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE) {
         return false;
     }
     return true;
@@ -559,16 +559,16 @@ static bool xmit_setup_next_usbdrv_ntb(void)
     xmit_ntb_t *ntb = ncm_interface.xmit_netusb_ntb;
 
     // Fill in NTB header
-    ntb->nth.dwSignature   = NTH16_SIGNATURE;
-    ntb->nth.wHeaderLength = sizeof(ntb->nth);
-    ntb->nth.wSequence     = ncm_interface.xmit_sequence++;
-    ntb->nth.wBlockLength  = sizeof(ntb->nth) + sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram);
-    ntb->nth.wNdpIndex     = sizeof(ntb->nth);
+    ntb->nth.dwSignature   = sys_cpu_to_le32(NTH16_SIGNATURE);
+    ntb->nth.wHeaderLength = sys_cpu_to_le16(sizeof(ntb->nth));
+    ntb->nth.wSequence     = sys_cpu_to_le16(ncm_interface.xmit_sequence++);
+    ntb->nth.wBlockLength  = sys_cpu_to_le16(sizeof(ntb->nth) + sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram));
+    ntb->nth.wNdpIndex     = sys_cpu_to_le16(sizeof(ntb->nth));
 
     // Fill in NDP16 header and terminator
-    ntb->ndp.dwSignature   = NDP16_SIGNATURE_NCM0;
-    ntb->ndp.wLength       = sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram);
-    ntb->ndp.wNextNdpIndex = 0;
+    ntb->ndp.dwSignature   = sys_cpu_to_le32(NDP16_SIGNATURE_NCM0);
+    ntb->ndp.wLength       = sys_cpu_to_le16(sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram));
+    ntb->ndp.wNextNdpIndex = sys_cpu_to_le16(0);
 
     memset(ntb->ndp_datagram, 0, sizeof(ntb->ndp_datagram));
     return true;
@@ -647,7 +647,7 @@ static void recv_put_ntb_into_ready_list(recv_ntb_t *ready_ntb)
  * put this buffer into the waiting list.
  */
 {
-    LOG_DBG("%p, %d", ready_ntb, ready_ntb->nth.wBlockLength);
+    LOG_DBG("%p, %d", ready_ntb, sys_le16_to_cpu(ready_ntb->nth.wBlockLength));
 
     for (int i = 0;  i < RECV_NTB_N;  ++i)
     {
@@ -723,14 +723,14 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
         LOG_ERR("  ill length: %d", len);
         return false;
     }
-    if (nth16->wHeaderLength != sizeof(nth16_t))
+    if (sys_le16_to_cpu(nth16->wHeaderLength) != sizeof(nth16_t))
     {
-        LOG_ERR("  ill nth16 length: %d", nth16->wHeaderLength);
+        LOG_ERR("  ill nth16 length: %d", sys_le16_to_cpu(nth16->wHeaderLength));
         return false;
     }
-    if (nth16->dwSignature != NTH16_SIGNATURE)
+    if (sys_le32_to_cpu(nth16->dwSignature) != NTH16_SIGNATURE)
     {
-        LOG_ERR("  ill signature: 0x%08x", (unsigned)nth16->dwSignature);
+        LOG_ERR("  ill signature: 0x%08x", (unsigned)sys_le32_to_cpu(nth16->dwSignature));
         return false;
     }
     if (len < sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t))
@@ -738,68 +738,69 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
         LOG_ERR("  ill min len: %d", len);
         return false;
     }
-    if (nth16->wBlockLength > len)
+    if (sys_le16_to_cpu(nth16->wBlockLength) > len)
     {
-        LOG_ERR("  ill block length: %d > %d", nth16->wBlockLength, len);
+        LOG_ERR("  ill block length: %d > %d", sys_le16_to_cpu(nth16->wBlockLength), len);
         return false;
     }
-    if (nth16->wBlockLength > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE)
+    if (sys_le16_to_cpu(nth16->wBlockLength) > CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE)
     {
-        LOG_ERR("  ill block length2: %d > %d", nth16->wBlockLength, CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
+        LOG_ERR("  ill block length2: %d > %d", sys_le16_to_cpu(nth16->wBlockLength), CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
         return false;
     }
-    if (nth16->wNdpIndex < sizeof(nth16)  ||  nth16->wNdpIndex > len - (sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)))
+    if (sys_le16_to_cpu(nth16->wNdpIndex) < sizeof(nth16)  ||  sys_le16_to_cpu(nth16->wNdpIndex) > len - (sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)))
     {
-        LOG_ERR("  ill position of first ndp: %d (%d)", nth16->wNdpIndex, len);
+        LOG_ERR("  ill position of first ndp: %d (%d)", sys_le16_to_cpu(nth16->wNdpIndex), len);
         return false;
     }
 
     //
     // check (first) NDP(16)
     //
-    const ndp16_t *ndp16 = (const ndp16_t *)(ntb->data + nth16->wNdpIndex);
+    const ndp16_t *ndp16 = (const ndp16_t *)(ntb->data + sys_le16_to_cpu(nth16->wNdpIndex));
 
-    if (ndp16->wLength < sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t))
+    if (sys_le16_to_cpu(ndp16->wLength) < sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t))
     {
-        LOG_ERR("  ill ndp16 length: %d", ndp16->wLength);
+        LOG_ERR("  ill ndp16 length: %d", sys_le16_to_cpu(ndp16->wLength));
         return false;
     }
-    if (ndp16->dwSignature != NDP16_SIGNATURE_NCM0  &&  ndp16->dwSignature != NDP16_SIGNATURE_NCM1)
+    if (sys_le32_to_cpu(ndp16->dwSignature) != NDP16_SIGNATURE_NCM0  &&  sys_le32_to_cpu(ndp16->dwSignature) != NDP16_SIGNATURE_NCM1)
     {
-        LOG_ERR("  ill signature: 0x%08x", (unsigned)ndp16->dwSignature);
+        LOG_ERR("  ill signature: 0x%08x", (unsigned)sys_le32_to_cpu(ndp16->dwSignature));
         return false;
     }
-    if (ndp16->wNextNdpIndex != 0)
+    if (sys_le16_to_cpu(ndp16->wNextNdpIndex) != 0)
     {
-        LOG_ERR("  cannot handle wNextNdpIndex!=0 (%d)", ndp16->wNextNdpIndex);
+        LOG_ERR("  cannot handle wNextNdpIndex!=0 (%d)", sys_le16_to_cpu(ndp16->wNextNdpIndex));
         return false;
     }
 
-    const ndp16_datagram_t *ndp16_datagram = (const ndp16_datagram_t *)(ntb->data + nth16->wNdpIndex + sizeof(ndp16_t));
+    const ndp16_datagram_t *ndp16_datagram = (const ndp16_datagram_t *)(ntb->data + sys_le16_to_cpu(nth16->wNdpIndex) + sizeof(ndp16_t));
     int ndx = 0;
-    uint16_t max_ndx = (uint16_t)((ndp16->wLength - sizeof(ndp16_t)) / sizeof(ndp16_datagram_t));
+    uint16_t max_ndx = (uint16_t)((sys_le16_to_cpu(ndp16->wLength) - sizeof(ndp16_t)) / sizeof(ndp16_datagram_t));
 
     if (max_ndx > 2)
     {
         // number of datagrams in NTB > 1
-        LOG_WRN("<<xyx %d (%d)", max_ndx - 1, ntb->nth.wBlockLength);
+        LOG_WRN("<<xyx %d (%d)", max_ndx - 1, sys_le16_to_cpu(ntb->nth.wBlockLength));
     }
-    if (ndp16_datagram[max_ndx-1].wDatagramIndex != 0  ||  ndp16_datagram[max_ndx-1].wDatagramLength != 0)
+    if (sys_le16_to_cpu(ndp16_datagram[max_ndx-1].wDatagramIndex) != 0  ||  sys_le16_to_cpu(ndp16_datagram[max_ndx-1].wDatagramLength) != 0)
     {
         LOG_DBG("  max_ndx != 0");
         return false;
     }
-    while (ndp16_datagram[ndx].wDatagramIndex != 0  &&  ndp16_datagram[ndx].wDatagramLength != 0)
+    while (sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramIndex) != 0  &&  sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramLength) != 0)
     {
-        LOG_DBG("  << %d %d", ndp16_datagram[ndx].wDatagramIndex, ndp16_datagram[ndx].wDatagramLength);
-        if (ndp16_datagram[ndx].wDatagramIndex > len)
+        LOG_DBG("  << %d %d", sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramIndex), sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramLength));
+        if (sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramIndex) > len)
         {
-            LOG_ERR("(EE) ill start of datagram[%d]: %d (%d)", ndx, ndp16_datagram[ndx].wDatagramIndex, len);
+            LOG_ERR("(EE) ill start of datagram[%d]: %d (%d)", ndx, sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramIndex), len);
             return false;
         }
-        if (ndp16_datagram[ndx].wDatagramIndex + ndp16_datagram[ndx].wDatagramLength > len)
+        if (sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramIndex) + sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramLength) > len)
         {
-            LOG_ERR("(EE) ill end of datagram[%d]: %d (%d)", ndx, ndp16_datagram[ndx].wDatagramIndex + ndp16_datagram[ndx].wDatagramLength, len);
+            LOG_ERR("(EE) ill end of datagram[%d]: %d (%d)", ndx,
+                    sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramIndex) + sys_le16_to_cpu(ndp16_datagram[ndx].wDatagramLength), len);
             return false;
         }
         ++ndx;
@@ -846,21 +847,21 @@ static void recv_transfer_datagram_to_netusb(void)
         }
 
         const ndp16_datagram_t *ndp16_datagram = (ndp16_datagram_t *)(ncm_interface.recv_netusb_ntb->data
-                                                                    + ncm_interface.recv_netusb_ntb->nth.wNdpIndex
+                                                                    + sys_le16_to_cpu(ncm_interface.recv_netusb_ntb->nth.wNdpIndex)
                                                                     + sizeof(ndp16_t));
 
-        if (ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramIndex == 0)
+        if (sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramIndex) == 0)
         {
             LOG_ERR("  SOMETHING WENT WRONG 1");
         }
-        else if (ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramLength == 0)
+        else if (sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramLength) == 0)
         {
             LOG_ERR("  SOMETHING WENT WRONG 2");
         }
         else
         {
-            uint16_t datagramIndex  = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramIndex;    // TODO endianess
-            uint16_t datagramLength = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramLength;
+            uint16_t datagramIndex  = sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramIndex);
+            uint16_t datagramLength = sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramLength);
             struct net_pkt *pkt;
 
             LOG_DBG("  recv[%d] - %d %d", ncm_interface.recv_netusb_ntb_datagram_ndx, datagramIndex, datagramLength);
@@ -898,8 +899,8 @@ static void recv_transfer_datagram_to_netusb(void)
                 LOG_DBG("    OK");
                 netusb_recv(pkt);
 
-                datagramIndex  = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx + 1].wDatagramIndex;
-                datagramLength = ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx + 1].wDatagramLength;
+                datagramIndex  = sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx + 1].wDatagramIndex);
+                datagramLength = sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx + 1].wDatagramLength);
 
                 if (datagramIndex != 0  &&  datagramLength != 0)
                 {
@@ -1030,19 +1031,19 @@ static int ncm_send(struct net_pkt *pkt)
         xmit_ntb_t *ntb = ncm_interface.xmit_netusb_ntb;
 
         // copy new datagram to the end of the current NTB
-        if (net_pkt_read(pkt, ntb->data + ntb->nth.wBlockLength, size))
+        if (net_pkt_read(pkt, ntb->data + sys_le16_to_cpu(ntb->nth.wBlockLength), size))
         {
             return -ENOBUFS;
         }
 
         // correct NTB internals
-        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramIndex  = ntb->nth.wBlockLength;
-        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramLength = size;
+        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramIndex  = sys_le16_to_cpu(ntb->nth.wBlockLength);
+        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramLength = sys_le16_to_cpu(size);
         ncm_interface.xmit_netusb_ntb_datagram_ndx += 1;
 
-        ntb->nth.wBlockLength += (uint16_t)(size + XMIT_ALIGN_OFFSET(size));
+        ntb->nth.wBlockLength = sys_cpu_to_le16(sys_le16_to_cpu(ntb->nth.wBlockLength) + (uint16_t)(size + XMIT_ALIGN_OFFSET(size)));
 
-        NET_ASSERT(ntb->nth.wBlockLength <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
+        NET_ASSERT(sys_le16_to_cpu(ntb->nth.wBlockLength) <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
 
         ret = 0;
     }

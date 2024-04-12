@@ -76,7 +76,7 @@ menu "My USB Device Networking support"
             int
             default 8
             help
-                Number of datagrams in an NCM buffer
+                Number of datagrams in an NCM buffer to host
 
         
         config CDC_NCM_RCV_NTB_MAX_SIZE
@@ -91,6 +91,12 @@ menu "My USB Device Networking support"
             help
                 Number of NCM buffers for reception
         
+        config CDC_NCM_RCV_MAX_DATAGRAMS_PER_NTB
+            int
+            default 8
+            help
+                Number of datagrams in an NCM buffer from host
+
     endif # USB_DEVICE_NETWORK_MY_NCM
 
 
