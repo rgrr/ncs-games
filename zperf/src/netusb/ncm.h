@@ -29,6 +29,11 @@
 #define __NCM_H_
 
 
+#if CONFIG_USB_DEVICE_NETWORK_MY_NCM_SIMPLE
+    #define CONFIG_CDC_NCM_XMT_MAX_DATAGRAMS_PER_NTB    1
+#endif
+
+
 /// CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE
 /// number of ntb buffers for reception side
 /// 1  - good performance

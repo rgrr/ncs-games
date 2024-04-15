@@ -153,8 +153,8 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
         .bDescriptorType = USB_DESC_ENDPOINT,
         .bEndpointAddress = CDC_NCM_INT_EP_ADDR,
         .bmAttributes = USB_DC_EP_INTERRUPT,
-        .wMaxPacketSize = sys_cpu_to_le16(CONFIG_CDC_ECM_INTERRUPT_EP_MPS),
-        .bInterval = 0x09,
+        .wMaxPacketSize = 64,
+        .bInterval = 50,
     },
 
     // Interface descriptor 1/0
@@ -342,7 +342,7 @@ static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
  *    This must be called from netd_xfer_cb() so that ep_in is ready
  */
 {
-#if 0
+#if 1
     return false;
 #else
     LOG_DBG("(%u)", (unsigned)xferred_bytes);
@@ -390,6 +390,9 @@ static void xmit_setup_next_usbdrv_ntb(void)
     ntb->ndp.dwSignature   = sys_cpu_to_le32(NDP16_SIGNATURE_NCM0);
     ntb->ndp.wLength       = sys_cpu_to_le16(sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram));
     ntb->ndp.wNextNdpIndex = sys_cpu_to_le16(0);
+
+    ntb->ndp_datagram[1].wDatagramLength = 0;
+    ntb->ndp_datagram[1].wDatagramIndex  = 0;
 
     memset(ntb->ndp_datagram, 0, sizeof(ntb->ndp_datagram));
 }   // xmit_setup_next_usbdrv_ntb
@@ -765,7 +768,7 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
 {
     LOG_DBG("ep:0x%02x size:%d", ep, xferred_bytes);
 
-//    uint32_t lck = irq_lock();
+    uint32_t lck = irq_lock();
 
     if (xferred_bytes == 0)
     {
@@ -774,7 +777,7 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
     else if ( !recv_validate_datagram( &ncm_interface.recv_usbdrv_ntb, xferred_bytes))
     {
         // verification failed: ignore NTB and return it to free
-        LOG_ERR("VALIDATION FAILED. WHAT CAN WE DO IN THIS CASE?");
+        LOG_ERR("VALIDATION FAILED. WHAT CAN WE DO IN THIS CASE?  len:%d", xferred_bytes);
     }
     else
     {
@@ -783,7 +786,7 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
 
     recv_start_new_reception(ep);
 
-//    irq_unlock(lck);
+    irq_unlock(lck);
 }   // ncm_read_cb
 
 

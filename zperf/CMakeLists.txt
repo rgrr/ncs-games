@@ -35,6 +35,20 @@ if(CONFIG_USB_DEVICE_NETWORK_MY_NCM)
 endif()
 
 
+if(CONFIG_USB_DEVICE_NETWORK_MY_NCM_SIMPLE)
+    message(STATUS "*** MY_NCM_SIMPLE active ***")
+    
+    target_include_directories(app PRIVATE
+        # IP headers
+        ${ZEPHYR_BASE}/subsys/net/ip
+    )
+
+    target_sources(app PRIVATE
+        src/netusb/function_ncm_simple.c
+    )
+endif()
+
+
 target_sources(app PRIVATE
     src/main.c
 )
