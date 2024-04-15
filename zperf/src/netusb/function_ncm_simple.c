@@ -46,9 +46,6 @@ LOG_MODULE_REGISTER(usb_ncm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
 #include "netusb.h"
 #include "ncm.h"
 
-#define USB_CDC_ECM_REQ_TYPE        0x21
-#define USB_CDC_SET_ETH_PKT_FILTER  0x43
-
 #define NCM_INT_EP_IDX          0
 #define NCM_OUT_EP_IDX          1
 #define NCM_IN_EP_IDX           2
@@ -233,15 +230,12 @@ USBD_STRING_DESCR_USER_DEFINE(primary) struct usb_cdc_ncm_mac_descr utf16le_mac 
 // calculate alignment of xmit datagrams within an NTB
 #define XMIT_ALIGN_OFFSET(x)   ((CONFIG_CDC_NCM_ALIGNMENT - ((x) & (CONFIG_CDC_NCM_ALIGNMENT - 1))) & (CONFIG_CDC_NCM_ALIGNMENT - 1))
 
-#define XMIT_NTB_N             CONFIG_CDC_NCM_XMT_NTB_N
-#define RECV_NTB_N             CONFIG_CDC_NCM_RCV_NTB_N
-
 typedef struct {
     // recv handling
-    recv_ntb_t  recv_usbdrv_ntb;                   //!< buffer for the running transfer usbdrv -> NCM driver
+    __aligned(4) recv_ntb_t  recv_usbdrv_ntb;                   //!< buffer for the running transfer usbdrv -> NCM driver
 
     // xmit handling
-    xmit_ntb_t  xmit_usbdrv_ntb;                   //!< buffer for the running transfer NCM driver -> usbdrv
+    __aligned(4) xmit_ntb_t  xmit_usbdrv_ntb;                   //!< buffer for the running transfer NCM driver -> usbdrv
     uint16_t    xmit_sequence;                     //!< NTB sequence counter
 
     // notification handling
@@ -330,7 +324,7 @@ static struct usb_ep_cfg_data ncm_ep_data[] = {
 //
 
 
-static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
+static void xmit_insert_required_zlp(uint32_t xferred_bytes)
 /**
  * Transmit a ZLP if required
  *
@@ -343,12 +337,10 @@ static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
  */
 {
 #if 1
-    return false;
-#else
     LOG_DBG("(%u)", (unsigned)xferred_bytes);
 
     if (xferred_bytes == 0  ||  xferred_bytes % CONFIG_CDC_ECM_BULK_EP_MPS != 0) {
-        return false;
+        return;
     }
 
     assert(ncm_interface.itf_data_alt == 1);
@@ -363,8 +355,6 @@ static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
     {
         LOG_ERR("cannot start transmission: %d", r);
     }
-
-    return true;
 #endif
 }   // xmit_insert_required_zlp
 
@@ -636,7 +626,7 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
  * Called for messages with \a USB_REQTYPE_TYPE_CLASS
  */
 {
-    LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
+    LOG_WRN("class - len %d req_type 0x%x req 0x%x enabled %u",
             *len, setup->bmRequestType, setup->bRequest,
             netusb_enabled());
 
@@ -697,6 +687,30 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
 
 
 
+static int ncm_custom_handler(struct usb_setup_packet *setup, int32_t *len,
+                              uint8_t **data)
+{
+    LOG_WRN("custom - len %d req_type 0x%x req 0x%x enabled %u",
+        *len, setup->bmRequestType, setup->bRequest,
+        netusb_enabled());
+
+    return -EINVAL;
+}   // ncm_custom_handler
+
+
+
+static int ncm_vendor_handler(struct usb_setup_packet *setup, int32_t *len,
+                              uint8_t **data)
+{
+    LOG_WRN("vendor - len %d req_type 0x%x req 0x%x enabled %u",
+        *len, setup->bmRequestType, setup->bRequest,
+        netusb_enabled());
+
+    return -EINVAL;
+}   // ncm_vendor_handler
+
+
+
 static int ncm_send(struct net_pkt *pkt)
 /**
  * Transmit \a pkt.
@@ -706,12 +720,11 @@ static int ncm_send(struct net_pkt *pkt)
     size_t size;
     int ret = -EINVAL;
 
+//    uint32_t lck = irq_lock();
+
     size = net_pkt_get_len(pkt);
 
     LOG_DBG("size %d", size);
-
-    uint32_t lck = irq_lock();
-
 
     NET_ASSERT(size <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE - (sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)));
 
@@ -724,6 +737,7 @@ static int ncm_send(struct net_pkt *pkt)
         // copy new datagram to the end of the current NTB
         if (net_pkt_read(pkt, ntb->data + sys_le16_to_cpu(ntb->nth.wBlockLength), size))
         {
+            LOG_ERR("ENOBUS");
             return -ENOBUFS;
         }
 
@@ -738,21 +752,35 @@ static int ncm_send(struct net_pkt *pkt)
         ret = 0;
     }
 
+#if 1
+    {
+        static xmit_ntb_t last_ntb;
+        int len = sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb.nth.wBlockLength) - sizeof(nth16_t);
+
+        if (memcmp( &last_ntb.ndp, &ncm_interface.xmit_usbdrv_ntb.ndp, len) == 0)
+        {
+            LOG_WRN("duplicate paket");
+        }
+        memcpy( &last_ntb, &ncm_interface.xmit_usbdrv_ntb, sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb.nth.wBlockLength));
+    }
+#endif
+
     {
         int len = sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb.nth.wBlockLength);
 
         LOG_DBG("  kick off transmission: %d", len);
         int r = usb_transfer_sync(ncm_ep_data[NCM_IN_EP_IDX].ep_addr,
-                                  ncm_interface.xmit_usbdrv_ntb.data, len, USB_TRANS_WRITE);
+                                  (uint8_t *)&ncm_interface.xmit_usbdrv_ntb, len, USB_TRANS_WRITE);
         if (r != len)
         {
             LOG_ERR("  cannot start transmission: %d", r);
+            return -EINVAL;
         }
 
         xmit_insert_required_zlp(len);
     }
 
-    irq_unlock(lck);
+//    irq_unlock(lck);
     return ret;
 }   // ncm_send
 
@@ -768,9 +796,9 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
 {
     LOG_DBG("ep:0x%02x size:%d", ep, xferred_bytes);
 
-    uint32_t lck = irq_lock();
+//    uint32_t lck = irq_lock();
 
-    if (xferred_bytes == 0)
+    if (xferred_bytes <= 0)
     {
         LOG_DBG("startup or ZLP received");
     }
@@ -786,7 +814,7 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
 
     recv_start_new_reception(ep);
 
-    irq_unlock(lck);
+//    irq_unlock(lck);
 }   // ncm_read_cb
 
 
@@ -961,8 +989,8 @@ USBD_DEFINE_CFG_DATA(cdc_ncm_config) = {
     .cb_usb_status = ncm_status_cb,
     .interface = {
         .class_handler = ncm_class_handler,
-        .custom_handler = NULL,
-        .vendor_handler = NULL,
+        .custom_handler = ncm_custom_handler,
+        .vendor_handler = ncm_vendor_handler,
     },
     .num_endpoints = ARRAY_SIZE(ncm_ep_data),
     .endpoint = ncm_ep_data,
