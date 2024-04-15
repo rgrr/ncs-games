@@ -93,9 +93,11 @@ menu "My USB Device Networking support"
         
         config CDC_NCM_RCV_MAX_DATAGRAMS_PER_NTB
             int
-            default 8
+            default 1
             help
-                Number of datagrams in an NCM buffer from host
+                Number of datagrams in an NCM buffer from host.  This setting
+                depends on CONFIG_NET_PKT_RX_COUNT.
+                Currently there is a problem within recv_transfer_datagram_to_netusb(), so use with care.
 
     endif # USB_DEVICE_NETWORK_MY_NCM
 
