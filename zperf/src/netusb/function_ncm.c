@@ -46,9 +46,6 @@ LOG_MODULE_REGISTER(usb_ncm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
 #include "netusb.h"
 #include "ncm.h"
 
-#define USB_CDC_ECM_REQ_TYPE        0x21
-#define USB_CDC_SET_ETH_PKT_FILTER  0x43
-
 #define NCM_INT_EP_IDX          0
 #define NCM_OUT_EP_IDX          1
 #define NCM_IN_EP_IDX           2
@@ -431,6 +428,9 @@ static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
  *    This must be called from netd_xfer_cb() so that ep_in is ready
  */
 {
+#if 1
+    return false;
+#else
     LOG_DBG("(%u)", (unsigned)xferred_bytes);
 
     if (xferred_bytes == 0  ||  xferred_bytes % CONFIG_CDC_ECM_BULK_EP_MPS != 0) {
@@ -451,6 +451,7 @@ static bool xmit_insert_required_zlp(uint32_t xferred_bytes)
     }
 
     return true;
+#endif
 }   // xmit_insert_required_zlp
 
 
@@ -505,9 +506,17 @@ static void xmit_start_if_possible(void)
     int len = sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb->nth.wBlockLength);
 
     LOG_DBG("  kick off transmission: %d", len);
+#if 0    // ZZZ async
     int r = usb_transfer(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, ncm_interface.xmit_usbdrv_ntb->data,
                          len, USB_TRANS_WRITE, ncm_send_cb, NULL);
     if (r != 0)
+#else
+    int r = usb_transfer_sync(ncm_ep_data[NCM_IN_EP_IDX].ep_addr,
+                              ncm_interface.xmit_usbdrv_ntb->data, len, USB_TRANS_WRITE);
+    xmit_put_ntb_into_free_list(ncm_interface.xmit_usbdrv_ntb);
+    ncm_interface.xmit_usbdrv_ntb = NULL;
+    if (r != len)
+#endif
     {
         LOG_ERR("  cannot start transmission: %d", r);
     }
@@ -550,7 +559,7 @@ static bool xmit_setup_next_usbdrv_ntb(void)
 
     ncm_interface.xmit_netusb_ntb = xmit_get_free_ntb();              // get next buffer (if any)
     if (ncm_interface.xmit_netusb_ntb == NULL) {
-        LOG_WRN("  ncm_interface.xmit_netusb_ntb == NULL");           // should happen rarely
+        ////LOG_WRN("  ncm_interface.xmit_netusb_ntb == NULL");           // should happen rarely
         return false;
     }
 
@@ -782,7 +791,7 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
     if (max_ndx > 2)
     {
         // number of datagrams in NTB > 1
-        LOG_WRN("<<xyx %d (%d)", max_ndx - 1, sys_le16_to_cpu(ntb->nth.wBlockLength));
+        LOG_DBG("<<xyx %d (%d)", max_ndx - 1, sys_le16_to_cpu(ntb->nth.wBlockLength));
     }
     if (sys_le16_to_cpu(ndp16_datagram[max_ndx-1].wDatagramIndex) != 0  ||  sys_le16_to_cpu(ndp16_datagram[max_ndx-1].wDatagramLength) != 0)
     {
@@ -843,6 +852,7 @@ static void recv_transfer_datagram_to_netusb(void)
 
         if (ncm_interface.recv_netusb_ntb == NULL  ||  !ok)
         {
+            // -> nothing left to do
             break;
         }
 
@@ -852,11 +862,15 @@ static void recv_transfer_datagram_to_netusb(void)
 
         if (sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramIndex) == 0)
         {
-            LOG_ERR("  SOMETHING WENT WRONG 1");
+            LOG_ERR("  SOMETHING WENT WRONG 1");                               // should have been caught by validation
+            recv_put_ntb_into_free_list(ncm_interface.recv_netusb_ntb);
+            ncm_interface.recv_netusb_ntb = NULL;
         }
         else if (sys_le16_to_cpu(ndp16_datagram[ncm_interface.recv_netusb_ntb_datagram_ndx].wDatagramLength) == 0)
         {
-            LOG_ERR("  SOMETHING WENT WRONG 2");
+            LOG_ERR("  SOMETHING WENT WRONG 2");                               // should have been caught by validation
+            recv_put_ntb_into_free_list(ncm_interface.recv_netusb_ntb);
+            ncm_interface.recv_netusb_ntb = NULL;
         }
         else
         {
@@ -866,10 +880,7 @@ static void recv_transfer_datagram_to_netusb(void)
 
             LOG_DBG("  recv[%d] - %d %d", ncm_interface.recv_netusb_ntb_datagram_ndx, datagramIndex, datagramLength);
 
-            if (datagramLength == 0)
-            {
-                ok = false;
-            }
+            NET_ASSERT(datagramIndex != 0  &&  datagramLength != 0);
 
             if (ok)
             {
@@ -1017,11 +1028,20 @@ static int ncm_class_handler(struct usb_setup_packet *setup, int32_t *len, uint8
 
 
 static int ncm_send(struct net_pkt *pkt)
+/**
+ * Transmit \a pkt.
+ * This is called by the netusb layer to initiate a transfer in usbdrv.
+ * For NCM the \a pkt goes into an NTB and if the NTB is "full", it is transferred to usbdrv.
+ */
 {
-    size_t size = net_pkt_get_len(pkt);
+    size_t size;
     int ret = -EINVAL;
 
     LOG_DBG("size %d", size);
+
+    uint32_t lck = irq_lock();
+
+    size = net_pkt_get_len(pkt);
 
     NET_ASSERT(size <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE - (sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)));
 
@@ -1050,10 +1070,12 @@ static int ncm_send(struct net_pkt *pkt)
     else
     {
         // cannot handle request -> just try to start transmission
-        LOG_WRN("  request blocked");     // could happen if all xmit buffers are full (but should happen rarely)
+        ////LOG_WRN("  request blocked");     // could happen if all xmit buffers are full (but should happen rarely)
         ret = -ENOBUFS;
     }
     xmit_start_if_possible();
+
+    irq_unlock(lck);
     return ret;
 }   // ncm_send
 
@@ -1069,12 +1091,16 @@ static void ncm_send_cb(uint8_t ep, int xferred_bytes, void *priv)
 {
     LOG_DBG("ep:0x%02x size:%d alt:%d", ep, xferred_bytes, ncm_interface.itf_data_alt);
 
+    uint32_t lck = irq_lock();
+
     xmit_put_ntb_into_free_list(ncm_interface.xmit_usbdrv_ntb);
     ncm_interface.xmit_usbdrv_ntb = NULL;
     if ( !xmit_insert_required_zlp(xferred_bytes))
     {
         xmit_start_if_possible();
     }
+
+    irq_unlock(lck);
 }   // ncm_send_cb
 
 
@@ -1088,6 +1114,8 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
  */
 {
     LOG_DBG("ep:0x%02x size:%d", ep, xferred_bytes);
+
+    uint32_t lck = irq_lock();
 
     if (xferred_bytes == 0)
     {
@@ -1108,6 +1136,8 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
     // restart reception
     recv_transfer_datagram_to_netusb();
     recv_try_to_start_new_reception(ep);
+
+    irq_unlock(lck);
 }   // ncm_read_cb
 
 
@@ -1164,7 +1194,7 @@ static void ncm_status_interface_cb(uint8_t ep, int tsize, void *priv)
                      USB_TRANS_WRITE,
                      ncm_status_interface_cb, NULL);
     }
-}
+}   // ncm_status_interface_cb
 
 
 
@@ -1269,6 +1299,8 @@ static void ncm_interface_config(struct usb_desc_header *head,
     cdc_ncm_cfg.if1_0.bInterfaceNumber = bInterfaceNumber + 1;
     cdc_ncm_cfg.if1_1.bInterfaceNumber = bInterfaceNumber + 1;
     cdc_ncm_cfg.iad.bFirstInterface = bInterfaceNumber;
+
+    ncm_init();
 }   // ncm_interface_config
 
 
