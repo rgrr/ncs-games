@@ -381,7 +381,7 @@ static void xmit_setup_next_usbdrv_ntb(void)
     ntb->ndp.wLength       = sys_cpu_to_le16(sizeof(ntb->ndp) + sizeof(ntb->ndp_datagram));
     ntb->ndp.wNextNdpIndex = sys_cpu_to_le16(0);
 
-    ntb->ndp_datagram[1].wDatagramLength = 0;
+    ntb->ndp_datagram[1].wDatagramLength = 0;   // TODO actually not required
     ntb->ndp_datagram[1].wDatagramIndex  = 0;
 
     memset(ntb->ndp_datagram, 0, sizeof(ntb->ndp_datagram));
@@ -742,10 +742,10 @@ static int ncm_send(struct net_pkt *pkt)
         }
 
         // correct NTB internals
-        ntb->ndp_datagram[0].wDatagramIndex  = sys_le16_to_cpu(ntb->nth.wBlockLength);
+        ntb->ndp_datagram[0].wDatagramIndex  = ntb->nth.wBlockLength;
         ntb->ndp_datagram[0].wDatagramLength = sys_le16_to_cpu(size);
 
-        ntb->nth.wBlockLength = sys_cpu_to_le16(sys_le16_to_cpu(ntb->nth.wBlockLength) + (uint16_t)(size + XMIT_ALIGN_OFFSET(size)));
+        ntb->nth.wBlockLength = sys_cpu_to_le16(sys_le16_to_cpu(ntb->nth.wBlockLength) + (uint16_t)size + XMIT_ALIGN_OFFSET(size));
 
         NET_ASSERT(sys_le16_to_cpu(ntb->nth.wBlockLength) <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
 
@@ -824,7 +824,7 @@ static int ncm_connect(bool connected)
  * Callback for connection status.
  */
 {
-    LOG_DBG("%d", connected);
+    LOG_WRN("connect - %d", connected);
 
     if (connected)
     {
