@@ -29,7 +29,7 @@ LOG_MODULE_REGISTER(usb_ecm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
 #define ECM_IN_EP_IDX           2
 
 
-static uint8_t tx_buf[NET_ETH_MAX_FRAME_SIZE], rx_buf[NET_ETH_MAX_FRAME_SIZE];
+static uint8_t tx_buf[CONFIG_CDC_NCM_XMT_NTB_MAX_SIZE], rx_buf[CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE];
 
 #define NCM_SUBCLASS            0x0d                 // TODO -> usb_cdc.h
 #define ETHERNET_FUNC_DESC_NCM  0x1a                 // TODO -> usb_cdc.h
@@ -399,59 +399,89 @@ static int ecm_send(struct net_pkt *pkt)
 {
     size_t len = net_pkt_get_len(pkt);
     int ret;
+    xmit_ntb_t *ntb = (xmit_ntb_t *)tx_buf;
+    static uint16_t seq;
 
-    if (VERBOSE_DEBUG) {
-        net_pkt_hexdump(pkt, "<");
-    }
+    ntb->nth.dwSignature = NTH16_SIGNATURE;
+    ntb->nth.wHeaderLength = sizeof(nth16_t);
+    ntb->nth.wSequence = ++seq;
+    //ntb->nth.wBlockLength = xx;
+    ntb->nth.wNdpIndex = 0x0c;
 
-    if (len > sizeof(tx_buf)) {
-        LOG_WRN("Trying to send too large packet, drop");
-        return -ENOMEM;
-    }
+    ntb->ndp.dwSignature = NDP16_SIGNATURE_NCM0;
+    ntb->ndp.wLength = 16;
+    ntb->ndp.wNextNdpIndex = 0;
 
-    if (net_pkt_read(pkt, tx_buf, len)) {
+    ntb->ndp_datagram[0].wDatagramIndex = ntb->nth.wHeaderLength + ntb->ndp.wLength;
+    ntb->ndp_datagram[0].wDatagramLength = len;
+    ntb->ndp_datagram[1].wDatagramIndex = 0;
+    ntb->ndp_datagram[1].wDatagramLength = 0;
+
+    ntb->nth.wBlockLength = ntb->ndp_datagram[0].wDatagramIndex + ntb->ndp_datagram[0].wDatagramLength;
+
+    if (net_pkt_read(pkt, ntb->data + ntb->ndp_datagram[0].wDatagramIndex, len)) {
         return -ENOBUFS;
     }
 
-    /* transfer data to host */
     ret = usb_transfer_sync(ecm_ep_data[ECM_IN_EP_IDX].ep_addr,
-                tx_buf, len, USB_TRANS_WRITE);
-    if (ret != len) {
-        LOG_ERR("Transfer failure");
+                            tx_buf, ntb->nth.wBlockLength,
+#if 0
+                            USB_TRANS_WRITE | USB_TRANS_NO_ZLP);
+#else
+                            // needs ZLP, otherwise there are errors in the log output
+                            USB_TRANS_WRITE);
+#endif
+    if (ret != ntb->nth.wBlockLength) {
+        LOG_ERR("Transfer failure %d", ret);
         return -EINVAL;
     }
 
     return 0;
 }
 
+
+
 static void ecm_read_cb(uint8_t ep, int size, void *priv)
 {
     struct net_pkt *pkt;
+    nth16_t *ntb;
+    ndp16_datagram_t *ndp_datagram;
+
+    LOG_DBG("%d %d", ep, size);
 
     if (size <= 0) {
         goto done;
     }
+
+    // NO VALIDITY CHECKING
+
+    ntb = (nth16_t *)rx_buf;
+    ndp_datagram = (ndp16_datagram_t *)(rx_buf + ntb->wNdpIndex + sizeof(ndp16_t));
+
+    uint16_t start = ndp_datagram[0].wDatagramIndex;
+    uint16_t len   = ndp_datagram[0].wDatagramLength;
 
     /* Linux considers by default that network usb device controllers are
      * not able to handle Zero Length Packet (ZLP) and then generates
      * a short packet containing a null byte. Handle by checking the IP
      * header length and dropping the extra byte.
      */
-    if (rx_buf[size - 1] == 0U) { /* last byte is null */
-        if (ecm_eth_size(rx_buf, size) == (size - 1)) {
+    if (rx_buf[start + len - 1] == 0U) { /* last byte is null */
+        if (ecm_eth_size(rx_buf + start, len) == (len - 1)) {
             /* last byte has been appended as delimiter, drop it */
-            size--;
+            LOG_WRN("removed trailing byte");
+            len--;
         }
     }
 
-    pkt = net_pkt_rx_alloc_with_buffer(netusb_net_iface(), size, AF_UNSPEC,
-                       0, K_FOREVER);
+    pkt = net_pkt_rx_alloc_with_buffer(netusb_net_iface(), len, AF_UNSPEC,
+                                       0, K_FOREVER);
     if (!pkt) {
         LOG_ERR("no memory for network packet");
         goto done;
     }
 
-    if (net_pkt_write(pkt, rx_buf, size)) {
+    if (net_pkt_write(pkt, rx_buf + start, len)) {
         LOG_ERR("Unable to write into pkt");
         net_pkt_unref(pkt);
         goto done;
@@ -467,6 +497,8 @@ done:
     usb_transfer(ecm_ep_data[ECM_OUT_EP_IDX].ep_addr, rx_buf,
              sizeof(rx_buf), USB_TRANS_READ, ecm_read_cb, NULL);
 }
+
+
 
 static int ecm_connect(bool connected)
 {
