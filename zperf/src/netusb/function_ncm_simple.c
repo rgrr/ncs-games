@@ -301,10 +301,19 @@ __aligned(4) static ncm_notify_connection_speed_change_t ncm_notify_speed_change
 };
 
 
+void int_cb(uint8_t ep, enum usb_dc_ep_cb_status_code code)
+{
+    LOG_ERR("ep: %d, code: %d", ep, code);
+}
+
 static struct usb_ep_cfg_data ncm_ep_data[] = {
     /* Configuration NCM */
     {
+#if 0
+        .ep_cb = int_cb,
+#else
         .ep_cb = usb_transfer_ep_callback,
+#endif
         .ep_addr = CDC_NCM_INT_EP_ADDR
     },
     {
@@ -336,7 +345,7 @@ static void xmit_insert_required_zlp(uint32_t xferred_bytes)
  *    This must be called from netd_xfer_cb() so that ep_in is ready
  */
 {
-#if 1
+#if 0
     LOG_DBG("(%u)", (unsigned)xferred_bytes);
 
     if (xferred_bytes == 0  ||  xferred_bytes % CONFIG_CDC_ECM_BULK_EP_MPS != 0) {
@@ -346,7 +355,7 @@ static void xmit_insert_required_zlp(uint32_t xferred_bytes)
     assert(ncm_interface.itf_data_alt == 1);
     assert( !usb_transfer_is_busy(ncm_ep_data[NCM_IN_EP_IDX].ep_addr));
 
-    LOG_DBG("  insert ZLP");
+    LOG_WRN("  insert ZLP");
 
     // start transmission of the ZLP
     int r = usb_transfer_sync(ncm_ep_data[NCM_IN_EP_IDX].ep_addr, NULL,
@@ -498,7 +507,7 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
     if (max_ndx > 2)
     {
         // number of datagrams in NTB > 1
-        LOG_DBG("<<xyx %d (%d)", max_ndx - 1, sys_le16_to_cpu(ntb->nth.wBlockLength));
+        LOG_ERR("<<xyx %d (%d)", max_ndx - 1, sys_le16_to_cpu(ntb->nth.wBlockLength));
     }
     if (sys_le16_to_cpu(ndp16_datagram[max_ndx-1].wDatagramIndex) != 0  ||  sys_le16_to_cpu(ndp16_datagram[max_ndx-1].wDatagramLength) != 0)
     {
@@ -537,7 +546,7 @@ static bool recv_validate_datagram(const recv_ntb_t *ntb, uint32_t len)
 
 
 
-static void recv_transfer_datagram_to_netusb(void)
+static void recv_transfer_datagram_to_netusb(bool debug)
 /**
  * Transfer the next (pending) datagram to netusb and return receive buffer if empty.
  */
@@ -550,48 +559,40 @@ static void recv_transfer_datagram_to_netusb(void)
         const ndp16_datagram_t *ndp16_datagram = (ndp16_datagram_t *)(ncm_interface.recv_usbdrv_ntb.data
                                                                     + sys_le16_to_cpu(ncm_interface.recv_usbdrv_ntb.nth.wNdpIndex)
                                                                     + sizeof(ndp16_t));
+        uint16_t datagramIndex  = sys_le16_to_cpu(ndp16_datagram[0].wDatagramIndex);
+        uint16_t datagramLength = sys_le16_to_cpu(ndp16_datagram[0].wDatagramLength);
+        struct net_pkt *pkt;
 
-        if (sys_le16_to_cpu(ndp16_datagram[0].wDatagramIndex) == 0)
+        LOG_DBG("  recv - %d %d", datagramIndex, datagramLength);
+
+        NET_ASSERT(datagramIndex != 0  &&  datagramLength != 0);
+
+        if (ok)
         {
-            LOG_ERR("  SOMETHING WENT WRONG 1");                               // should have been caught by validation
+            pkt = net_pkt_rx_alloc_with_buffer(netusb_net_iface(), datagramLength, AF_UNSPEC, 0, K_FOREVER);
+            if (pkt == NULL)
+            {
+                LOG_ERR("no memory for network packet");
+                ok = false;
+            }
         }
-        else if (sys_le16_to_cpu(ndp16_datagram[0].wDatagramLength) == 0)
+
+        if (ok)
         {
-            LOG_ERR("  SOMETHING WENT WRONG 2");                               // should have been caught by validation
+            if (debug)
+            {
+                printk("->netusb  %d %d\n", datagramIndex, datagramLength);
+            }
+            if (net_pkt_write(pkt, ncm_interface.recv_usbdrv_ntb.data + datagramIndex, datagramLength)) {
+                LOG_ERR("Unable to write into pkt");
+                net_pkt_unref(pkt);
+                ok = false;
+            }
         }
-        else
+
+        if (ok)
         {
-            uint16_t datagramIndex  = sys_le16_to_cpu(ndp16_datagram[0].wDatagramIndex);
-            uint16_t datagramLength = sys_le16_to_cpu(ndp16_datagram[0].wDatagramLength);
-            struct net_pkt *pkt;
-
-            LOG_DBG("  recv - %d %d", datagramIndex, datagramLength);
-
-            NET_ASSERT(datagramIndex != 0  &&  datagramLength != 0);
-
-            if (ok)
-            {
-                pkt = net_pkt_rx_alloc_with_buffer(netusb_net_iface(), datagramLength, AF_UNSPEC, 0, K_FOREVER);
-                if (pkt == NULL)
-                {
-                    LOG_ERR("no memory for network packet");
-                    ok = false;
-                }
-            }
-
-            if (ok)
-            {
-                if (net_pkt_write(pkt, ncm_interface.recv_usbdrv_ntb.data + datagramIndex, datagramLength)) {
-                    LOG_ERR("Unable to write into pkt");
-                    net_pkt_unref(pkt);
-                    ok = false;
-                }
-            }
-
-            if (ok)
-            {
-                netusb_recv(pkt);
-            }
+            netusb_recv(pkt);
         }
     }
 }   // recv_transfer_datagram_to_netusb
@@ -719,13 +720,31 @@ static int ncm_send(struct net_pkt *pkt)
 {
     size_t size;
     int ret = -EINVAL;
+    static int cnt;
+    bool debug = false;
+    static bool locked;
 
 //    uint32_t lck = irq_lock();
+
+    if (locked)
+    {
+        LOG_ERR("ncm_send locked!");
+        return -ENOBUFS;
+    }
+    locked = true;
+
+    ++cnt;
+    if (cnt > 5000)
+    {
+        cnt = 0;
+        debug = true;
+    }
 
     size = net_pkt_get_len(pkt);
 
     LOG_DBG("size %d", size);
 
+    NET_ASSERT(size > 10);
     NET_ASSERT(size <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE - (sizeof(nth16_t) + sizeof(ndp16_t) + 2*sizeof(ndp16_datagram_t)));
 
     xmit_setup_next_usbdrv_ntb();
@@ -738,6 +757,7 @@ static int ncm_send(struct net_pkt *pkt)
         if (net_pkt_read(pkt, ntb->data + sys_le16_to_cpu(ntb->nth.wBlockLength), size))
         {
             LOG_ERR("ENOBUS");
+            locked = false;
             return -ENOBUFS;
         }
 
@@ -745,14 +765,14 @@ static int ncm_send(struct net_pkt *pkt)
         ntb->ndp_datagram[0].wDatagramIndex  = ntb->nth.wBlockLength;
         ntb->ndp_datagram[0].wDatagramLength = sys_le16_to_cpu(size);
 
-        ntb->nth.wBlockLength = sys_cpu_to_le16(sys_le16_to_cpu(ntb->nth.wBlockLength) + (uint16_t)size + XMIT_ALIGN_OFFSET(size));
+        ntb->nth.wBlockLength = sys_cpu_to_le16(sys_le16_to_cpu(ntb->nth.wBlockLength) + (uint16_t)size);  //  + XMIT_ALIGN_OFFSET(size));
 
         NET_ASSERT(sys_le16_to_cpu(ntb->nth.wBlockLength) <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
 
         ret = 0;
     }
 
-#if 1
+#if 0
     {
         static xmit_ntb_t last_ntb;
         int len = sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb.nth.wBlockLength) - sizeof(nth16_t);
@@ -768,19 +788,33 @@ static int ncm_send(struct net_pkt *pkt)
     {
         int len = sys_le16_to_cpu(ncm_interface.xmit_usbdrv_ntb.nth.wBlockLength);
 
+        if (debug)
+        {
+            printk("send ");
+            for (int i = 0;  i < len;  ++i)
+            {
+                printk(" %02x", ncm_interface.xmit_usbdrv_ntb.data[i]);
+            }
+            printk("\n");
+        }
+
         LOG_DBG("  kick off transmission: %d", len);
         int r = usb_transfer_sync(ncm_ep_data[NCM_IN_EP_IDX].ep_addr,
-                                  (uint8_t *)&ncm_interface.xmit_usbdrv_ntb, len, USB_TRANS_WRITE);
+                                  ncm_interface.xmit_usbdrv_ntb.data, len,
+                                  USB_TRANS_WRITE | USB_TRANS_NO_ZLP);
         if (r != len)
         {
             LOG_ERR("  cannot start transmission: %d", r);
+            locked = false;
             return -EINVAL;
         }
+        k_msleep(1);
 
         xmit_insert_required_zlp(len);
     }
 
 //    irq_unlock(lck);
+    locked = false;
     return ret;
 }   // ncm_send
 
@@ -794,9 +828,31 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
  * - if there is a free receive buffer, initiate reception
  */
 {
+    static int cnt;
+    bool debug = false;
+
+    usb_cancel_transfer(ep);
+
     LOG_DBG("ep:0x%02x size:%d", ep, xferred_bytes);
 
 //    uint32_t lck = irq_lock();
+
+    ++cnt;
+    if (cnt > 5000)
+    {
+        cnt = 0;
+        debug = true;
+    }
+
+    if (debug)
+    {
+        printk("read_cb ");
+        for (int i = 0;  i < xferred_bytes;  ++i)
+        {
+            printk(" %02x", ncm_interface.recv_usbdrv_ntb.data[i]);
+        }
+        printk("\n");
+    }
 
     if (xferred_bytes <= 0)
     {
@@ -806,10 +862,15 @@ static void ncm_read_cb(uint8_t ep, int xferred_bytes, void *priv)
     {
         // verification failed: ignore NTB and return it to free
         LOG_ERR("VALIDATION FAILED. WHAT CAN WE DO IN THIS CASE?  len:%d", xferred_bytes);
+        for (int i = 0;  i < xferred_bytes;  ++i)
+        {
+            printk(" %02x", ncm_interface.recv_usbdrv_ntb.data[i]);
+        }
+        printk("\n");
     }
     else
     {
-        recv_transfer_datagram_to_netusb();
+        recv_transfer_datagram_to_netusb(debug);
     }
 
     recv_start_new_reception(ep);
