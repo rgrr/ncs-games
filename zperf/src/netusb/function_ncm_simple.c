@@ -21,13 +21,9 @@ LOG_MODULE_REGISTER(usb_ecm, CONFIG_USB_DEVICE_NETWORK_LOG_LEVEL);
 #include "netusb.h"
 #include "ncm.h"
 
-#define USB_CDC_ECM_REQ_TYPE        0x21
-#define USB_CDC_SET_ETH_PKT_FILTER  0x43
-
 #define ECM_INT_EP_IDX          0
 #define ECM_OUT_EP_IDX          1
 #define ECM_IN_EP_IDX           2
-
 
 static uint8_t tx_buf[CONFIG_CDC_NCM_XMT_NTB_MAX_SIZE], rx_buf[CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE];
 
@@ -182,24 +178,6 @@ USBD_CLASS_DESCR_DEFINE(primary, 0) struct usb_cdc_ncm_config cdc_ncm_cfg = {
 };
 
 typedef struct {
-//    // recv handling
-//    __aligned(4) recv_ntb_t recv_ntb[RECV_NTB_N];  //!< actual recv NTBs
-//    recv_ntb_t *recv_free_ntb[RECV_NTB_N];         //!< free list of recv NTBs
-//    recv_ntb_t *recv_ready_ntb[RECV_NTB_N];        //!< NTBs waiting for transmission to netusb
-//    recv_ntb_t *recv_usbdrv_ntb;                   //!< buffer for the running transfer usbdrv -> NCM driver
-//    recv_ntb_t *recv_netusb_ntb;                   //!< buffer for the running transfer NCM driver -> netusb
-//    uint16_t    recv_netusb_ntb_datagram_ndx;      //!< index into \a recv_netusb_ntb_datagram
-//
-//    // xmit handling
-//    __aligned(4) xmit_ntb_t xmit_ntb[XMIT_NTB_N];  //!< actual xmit NTBs
-//    xmit_ntb_t *xmit_free_ntb[XMIT_NTB_N];         //!< free list of xmit NTBs
-//    xmit_ntb_t *xmit_ready_ntb[XMIT_NTB_N];        //!< NTBs waiting for transmission to usbdrv
-//    xmit_ntb_t *xmit_usbdrv_ntb;                   //!< buffer for the running transfer NCM driver -> usbdrv
-//    xmit_ntb_t *xmit_netusb_ntb;                   //!< buffer for the running transfer netusb -> NCM driver
-//    uint16_t    xmit_sequence;                     //!< NTB sequence counter
-//    uint16_t    xmit_netusb_ntb_datagram_ndx;      //!< index into \a xmit_netusb_ntb_datagram
-
-    // notification handling
     enum {
         IF_STATE_INIT = 0,
         IF_STATE_FIRST_SKIPPED,
@@ -261,12 +239,6 @@ __aligned(4) static ncm_notify_connection_speed_change_t ncm_notify_speed_change
         .uplink   = sys_cpu_to_le32(12000000),
 };
 
-
-static uint8_t ecm_get_first_iface_number(void)
-{
-    return cdc_ncm_cfg.if0.bInterfaceNumber;
-}
-
 static struct usb_ep_cfg_data ecm_ep_data[] = {
     /* Configuration ECM */
     {
@@ -284,6 +256,15 @@ static struct usb_ep_cfg_data ecm_ep_data[] = {
         .ep_addr = CDC_ECM_IN_EP_ADDR
     },
 };
+
+
+
+static uint8_t ecm_get_first_iface_number(void)
+{
+    return cdc_ncm_cfg.if0.bInterfaceNumber;
+}
+
+
 
 static int ecm_class_handler(struct usb_setup_packet *setup, int32_t *len,
                  uint8_t **data)
@@ -347,6 +328,8 @@ static int ecm_class_handler(struct usb_setup_packet *setup, int32_t *len,
     return -ENOTSUP;
 }
 
+
+
 static int ecm_custom_handler(struct usb_setup_packet *setup, int32_t *len,
                  uint8_t **data)
 {
@@ -357,6 +340,8 @@ static int ecm_custom_handler(struct usb_setup_packet *setup, int32_t *len,
     return -EINVAL;
 }
 
+
+
 static int ecm_vendor_handler(struct usb_setup_packet *setup, int32_t *len,
                  uint8_t **data)
 {
@@ -366,6 +351,8 @@ static int ecm_vendor_handler(struct usb_setup_packet *setup, int32_t *len,
 
     return -EINVAL;
 }
+
+
 
 /* Retrieve expected pkt size from ethernet/ip header */
 static size_t ecm_eth_size(void *ecm_pkt, size_t len)
@@ -394,6 +381,8 @@ static size_t ecm_eth_size(void *ecm_pkt, size_t len)
 
     return sizeof(struct net_eth_hdr) + ip_len;
 }
+
+
 
 static int ecm_send(struct net_pkt *pkt)
 {
@@ -513,6 +502,8 @@ static int ecm_connect(bool connected)
     return 0;
 }
 
+
+
 static struct netusb_function ecm_function = {
     .connect_media = ecm_connect,
     .send_pkt = ecm_send,
@@ -622,6 +613,8 @@ static void ecm_status_cb(struct usb_cfg_data *cfg,
     }
 }
 
+
+
 struct usb_cdc_ecm_mac_descr {
     uint8_t bLength;
     uint8_t bDescriptorType;
@@ -634,6 +627,8 @@ USBD_STRING_DESCR_USER_DEFINE(primary) struct usb_cdc_ecm_mac_descr utf16le_mac 
     .bDescriptorType = USB_DESC_STRING,
     .bString = CONFIG_USB_DEVICE_NETWORK_ECM_MAC
 };
+
+
 
 static void ecm_interface_config(struct usb_desc_header *head,
                  uint8_t bInterfaceNumber)
@@ -654,6 +649,8 @@ static void ecm_interface_config(struct usb_desc_header *head,
     cdc_ncm_cfg.if1_1.bInterfaceNumber = bInterfaceNumber + 1;
     cdc_ncm_cfg.iad.bFirstInterface = bInterfaceNumber;
 }
+
+
 
 USBD_DEFINE_CFG_DATA(cdc_ecm_config) = {
     .usb_device_description = NULL,
