@@ -1057,11 +1057,11 @@ static int ncm_send(struct net_pkt *pkt)
         }
 
         // correct NTB internals
-        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramIndex  = sys_le16_to_cpu(ntb->nth.wBlockLength);
+        ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramIndex  = ntb->nth.wBlockLength;
         ntb->ndp_datagram[ncm_interface.xmit_netusb_ntb_datagram_ndx].wDatagramLength = sys_le16_to_cpu(size);
         ncm_interface.xmit_netusb_ntb_datagram_ndx += 1;
 
-        ntb->nth.wBlockLength = sys_cpu_to_le16(sys_le16_to_cpu(ntb->nth.wBlockLength) + (uint16_t)(size + XMIT_ALIGN_OFFSET(size)));
+        ntb->nth.wBlockLength = sys_cpu_to_le16(sys_le16_to_cpu(ntb->nth.wBlockLength) + (uint16_t)size + XMIT_ALIGN_OFFSET(size));
 
         NET_ASSERT(sys_le16_to_cpu(ntb->nth.wBlockLength) <= CONFIG_CDC_NCM_RCV_NTB_MAX_SIZE);
 
