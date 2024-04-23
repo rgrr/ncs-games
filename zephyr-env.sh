@@ -10,4 +10,5 @@ export PYTHONPATH=$ZEPHYR_TOOLS/usr/local/lib/python3.9:$ZEPHYR_TOOLS/usr/local/
 export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
 export ZEPHYR_SDK_INSTALL_DIR=$ZEPHYR_TOOLS/opt/zephyr-sdk
 
-. /home/hardy/ncs/v2.6.0/zephyr/zephyr-env.sh
+#. /home/hardy/ncs/v2.6.0/zephyr/zephyr-env.sh
+. /home/hardy/zephyrproject/zephyr/zephyr-env.sh

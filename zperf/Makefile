@@ -2,19 +2,28 @@
 #
 BUILD_DIR := _build
 PROJECT   := zephyr
-BOARD     := nrf52840dk_nrf52840
-
-WEST_CONF := -DNCS_TOOLCHAIN_VERSION=NONE 
-WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next_ecm.conf boards/$(BOARD).conf"
-WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ecm.overlay boards/$(BOARD).overlay"
-WEST_CONF += -DBOARD_ROOT=. -DCACHED_CONF_FILE=prj.conf
+BOARD     := nrf52840dk/nrf52840
+BOARD_    := $(subst /,_,$(BOARD))
+WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next_ecm.conf boards/$(BOARD_).conf"
+WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ecm.overlay boards/$(BOARD_).overlay"
+WEST_CONF += -DBOARD_ROOT=.
 
 SHELL     := /usr/bin/bash
 
 
 .PHONY: aaa
 aaa:
-	source ../zephyr-env.sh; west -V
+	. ../zephyr-env.sh; printenv | sort
+	. ../zephyr-env.sh; which python; python --version
+	. ../zephyr-env.sh; which west; west --version
+	. ../zephyr-env.sh; which cmake; cmake --version
+
+
+# Zephyr update components
+.PHONY: west-update
+west-update:
+	. ../zephyr-env.sh; west --version
+	. ../zephyr-env.sh; west -v update
 
 
 .PHONY: clean

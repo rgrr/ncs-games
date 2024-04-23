@@ -52,3 +52,8 @@ endif()
 target_sources(app PRIVATE
     src/main.c
 )
+
+
+if (CONFIG_USB_DEVICE_STACK_NEXT)
+  include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)
+endif()

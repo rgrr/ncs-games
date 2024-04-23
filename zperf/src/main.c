@@ -39,6 +39,10 @@
  * iperf UDP does only work with IPv4!
  *     for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1 -u; sleep 2; done
  *
+ * Other tests:
+ *     iperf -c 192.168.2.1 -e -i 1 -M 8000 -l 125 -P 1 -b 1000
+ *     for MSS in {100..512}; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+ *
  * Telnet:
  *     telnet 2001:db8::1
  *
@@ -48,7 +52,6 @@
  *     this did not work:
  *         cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt ~/.config/SEGGER/
  *
- *     iperf -c 192.168.2.1 -e -i 1 -M 8000 -l 125 -P 1 -b 1000
  */
 
 #include <zephyr/logging/log.h>
@@ -56,15 +59,37 @@
 #include <zephyr/net/net_config.h>
 #include <zephyr/net/zperf.h>
 #include <zephyr/usb/usb_device.h>
+#include <zephyr/usb/usbd.h>
 
 #ifdef CONFIG_NET_LOOPBACK_SIMULATE_PACKET_DROP
     #include <zephyr/net/loopback.h>
 #endif
 
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+    #include <sample_usbd.h>
+#endif
+
+
 LOG_MODULE_REGISTER(zperf, LOG_LEVEL_DBG);
 
 
 #define DHCPV4_POOL_START "192.168.2.20"
+
+
+
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+static int enable_usb_device_next(void)
+{
+    struct usbd_contex *sample_usbd = sample_usbd_init_device(NULL);
+
+    if (sample_usbd == NULL) {
+        printk("Failed to initialize USB device");
+        return -ENODEV;
+    }
+
+    return usbd_enable(sample_usbd);
+}
+#endif /* CONFIG_USB_DEVICE_STACK_NEXT */
 
 
 
@@ -90,11 +115,11 @@ void my_zperf_callback(enum zperf_status status,
         if (result != NULL)
         {
 #if 0
-            printk("total:                  %d bytes\n", result->total_len);
+            printk("total:                  %d bytes\n", (int)result->total_len);
             printk("packet_size:            %d\n", result->packet_size);
-            printk("duration:               %dms\n", result->time_in_us / 1000);
+            printk("duration:               %dms\n", (int)(result->time_in_us / 1000));
             printk("jitter_in_us:           %dus\n", result->jitter_in_us);
-            printk("client_time_in_us:      %dus\n", result->client_time_in_us);
+            printk("client_time_in_us:      %dus\n", (int)result->client_time_in_us);
 
             printk("nb_packets_sent:        %d\n", result->nb_packets_sent);
             printk("nb_packets_rcvd:        %d\n", result->nb_packets_rcvd);
@@ -102,10 +127,10 @@ void my_zperf_callback(enum zperf_status status,
             printk("nb_packets_outorder:    %d\n", result->nb_packets_outorder);
             printk("nb_packets_errors:      %d\n", result->nb_packets_errors);
 #else
-            LOG_INF("total:                  %d bytes", result->total_len);
-            LOG_INF("duration:               %dms", result->time_in_us / 1000);
-            LOG_INF("throughput:             %d bytes/s", (100*result->total_len) / (result->time_in_us / 10000));
-            LOG_INF("                        %d bit/s", (100*result->total_len) / (result->time_in_us / 80000));
+            LOG_INF("total:                  %d bytes", (int)result->total_len);
+            LOG_INF("duration:               %dms", (int)(result->time_in_us / 1000));
+            LOG_INF("throughput:             %d bytes/s", (int)((100*result->total_len) / (result->time_in_us / 10000)));
+            LOG_INF("                        %d bit/s", (int)((100*result->total_len) / (result->time_in_us / 80000)));
 #endif
         }
         LOG_INF("================================================");
@@ -163,24 +188,25 @@ static void configure_dhcp_server(void)
 
 int main(void)
 {
-#if defined(CONFIG_USB_DEVICE_STACK)
+#if defined(CONFIG_USB_DEVICE_STACK) || defined(CONFIG_USB_DEVICE_STACK_NEXT)
     int ret;
 
+#if defined(CONFIG_USB_DEVICE_STACK)
     ret = usb_enable(NULL);
+#endif
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+    ret = enable_usb_device_next();
+#endif
     if (ret != 0) {
-        LOG_ERR("usb enable error %d", ret);
+        printk("usb enable error %d\n", ret);
     }
 
     (void)net_config_init_app(NULL, "Initializing network");
 #endif /* CONFIG_USB_DEVICE_STACK */
+
 #ifdef CONFIG_NET_LOOPBACK_SIMULATE_PACKET_DROP
-    //loopback_set_packet_drop_ratio(1);
+    loopback_set_packet_drop_ratio(1);
 #endif
-
-#if CONFIG_NET_DHCPV4_SERVER
-    configure_dhcp_server();
-#endif
-
 
     //
     // automatically start TCP/UDP server
@@ -193,14 +219,5 @@ int main(void)
         zperf_udp_download( &param, my_zperf_callback, NULL);   // just with IPv4?  And no callback?
     }
 
-#if 0
-    for (;;)
-    {
-        static int cnt;
-
-        k_msleep(1000);
-        //printk("...%d\n", ++cnt);
-    }
-#endif
     return 0;
 }
