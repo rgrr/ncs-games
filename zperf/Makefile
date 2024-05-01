@@ -4,8 +4,8 @@ BUILD_DIR := _build
 PROJECT   := zephyr
 BOARD     := nrf52840dk/nrf52840
 BOARD_    := $(subst /,_,$(BOARD))
-WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next_ecm.conf boards/$(BOARD_).conf"
-WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ecm.overlay boards/$(BOARD_).overlay"
+WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next.conf boards/$(BOARD_).conf"
+WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ncm.overlay boards/$(BOARD_).overlay"
 WEST_CONF += -DBOARD_ROOT=.
 
 SHELL     := /usr/bin/bash
