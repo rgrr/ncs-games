@@ -84,6 +84,13 @@ Testing IPv4 and UDP
 Traffic can be nicely monitored with Wireshark.
 
 
+### ping
+
+  for SIZE in {10..1000}; do ping -q -c 5 -i 0.002 -s $SIZE 2001:db8::1; done
+
+  for SIZE in {10..1000}; do ping -q -c 5 -i 0.002 -s $SIZE 192.168.2.1; done
+
+
 ### Telnet
 
 Telnet connection can be established with
