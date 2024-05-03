@@ -2,13 +2,23 @@
 #
 BUILD_DIR := _build
 PROJECT   := zephyr
+#CONF      := next-ncm
+CONF      := old
 BOARD     := nrf52840dk/nrf52840
 BOARD_    := $(subst /,_,$(BOARD))
-WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next.conf boards/$(BOARD_).conf"
-WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ncm.overlay boards/$(BOARD_).overlay"
 WEST_CONF += -DBOARD_ROOT=.
 
 SHELL     := /usr/bin/bash
+
+
+ifeq ($(CONF),next-ncm)
+    WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next.conf boards/$(BOARD_).conf"
+    WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ncm.overlay boards/$(BOARD_).overlay"
+endif
+ifeq ($(CONF),old)
+    WEST_CONF += -DEXTRA_CONF_FILE="overlay-netusb.conf boards/$(BOARD_).conf"
+    WEST_CONF += -DDTC_OVERLAY_FILE="boards/$(BOARD_).overlay"
+endif
 
 
 .PHONY: aaa
@@ -60,7 +70,8 @@ details: all
 
 .PHONY: flash
 flash: all
-	cp $(BUILD_DIR)/zephyr/$(PROJECT).uf2 /media/picoprobe
+	#cp $(BUILD_DIR)/zephyr/$(PROJECT).uf2 /media/picoprobe
+	pyocd flash $(BUILD_DIR)/zephyr/$(PROJECT).elf -f 10m -e chip
 	@echo "ok."
 
 
