@@ -2,9 +2,8 @@
 #
 BUILD_DIR := _build
 PROJECT   := zephyr
-CONF      := next-ncm
-#CONF      := next-ecm
-#CONF      := old
+CONF      := 2
+#BOARD     := rpi_pico
 BOARD     := nrf52840dk/nrf52840
 BOARD_    := $(subst /,_,$(BOARD))
 WEST_CONF += -DBOARD_ROOT=.
@@ -12,17 +11,20 @@ WEST_CONF += -DBOARD_ROOT=.
 SHELL     := /usr/bin/bash
 
 
-ifeq ($(CONF),next-ecm)
+ifeq ($(CONF),0)
+    # old
+    WEST_CONF += -DEXTRA_CONF_FILE="overlay-netusb.conf boards/$(BOARD_).conf"
+    WEST_CONF += -DDTC_OVERLAY_FILE="boards/$(BOARD_).overlay"
+endif
+ifeq ($(CONF),1)
+    # next-ecm
     WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next.conf boards/$(BOARD_).conf"
     WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ecm.overlay boards/$(BOARD_).overlay"
 endif
-ifeq ($(CONF),next-ncm)
+ifeq ($(CONF),2)
+    # next-ncm
     WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next.conf boards/$(BOARD_).conf"
     WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ncm.overlay boards/$(BOARD_).overlay"
-endif
-ifeq ($(CONF),old)
-    WEST_CONF += -DEXTRA_CONF_FILE="overlay-netusb.conf boards/$(BOARD_).conf"
-    WEST_CONF += -DDTC_OVERLAY_FILE="boards/$(BOARD_).overlay"
 endif
 
 
