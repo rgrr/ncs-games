@@ -33,25 +33,35 @@
  * Testing
  * -------
  * iperf IPv6:
- *     for MSS in 10 100 800 1450; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
- *     for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+ *     - for MSS in 10 100 800 1450; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+ *     - for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 2001:db8::1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
  *
  * iperf UDP does only work with IPv4!
- *     for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1 -u; sleep 2; done
+ *     - iperf -c 192.168.2.1 -e -i 1 -M 1000 -l 8192 -P 1 -u
+ *     - iperf -c 192.168.2.1 -e -i 1 -l 1024 -P 1 -u
+ *          loads SystemView fully
+ *     - for MSS in 10 20 40 80 160 320 640 1000 1100 1200 1300 1400 1500; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1 -u; sleep 2; done
  *
  * Other tests:
- *     iperf -c 192.168.2.1 -e -i 1 -M 8000 -l 125 -P 1 -b 1000
- *     for MSS in {100..512}; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+ *     - iperf -c 192.168.2.1 -e -i 1 -M 8000 -l 125 -P 1 -b 1000
+ *     - for MSS in {100..512}; do iperf -c 192.168.2.1 -e -i 1 -M $MSS -l 8192 -P 1; sleep 2; done
+ *     - ping -f 192.168.2.1 -i 0.006
+ *          this works nice with SystemView (almost max load)
  *
  * Telnet:
- *     telnet 2001:db8::1
+ *     - telnet 2001:db8::1
  *
  * SystemView tracing:
- *     cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt /opt/SEGGER/SystemView_V352a/Description
+ *     - cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt /opt/SEGGER/SystemView_V352a/Description
  *
- *     this did not work:
+ *     - this did not work:
  *         cp $ZEPHYR_BASE/subsys/tracing/sysview/SYSVIEW_Zephyr.txt ~/.config/SEGGER/
  *
+ * Notes
+ * -----
+ * - 25.07.2024
+ *   - only zperf-UDP does currently work
+ *   - switched network logging off, because that crashed the application
  */
 
 #include <zephyr/logging/log.h>
