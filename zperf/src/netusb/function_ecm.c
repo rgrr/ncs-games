@@ -215,6 +215,26 @@ static int ecm_class_handler(struct usb_setup_packet *setup, int32_t *len,
 	return -ENOTSUP;
 }
 
+static int ecm_custom_handler(struct usb_setup_packet *setup, int32_t *len,
+                 uint8_t **data)
+{
+    LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
+        *len, setup->bmRequestType, setup->bRequest,
+        netusb_enabled());
+
+    return -EINVAL;
+}
+
+static int ecm_vendor_handler(struct usb_setup_packet *setup, int32_t *len,
+                 uint8_t **data)
+{
+    LOG_DBG("len %d req_type 0x%x req 0x%x enabled %u",
+        *len, setup->bmRequestType, setup->bRequest,
+        netusb_enabled());
+
+    return -EINVAL;
+}
+
 /* Retrieve expected pkt size from ethernet/ip header */
 static size_t ecm_eth_size(void *ecm_pkt, size_t len)
 {
@@ -428,8 +448,8 @@ USBD_DEFINE_CFG_DATA(cdc_ecm_config) = {
 	.cb_usb_status = ecm_status_cb,
 	.interface = {
 		.class_handler = ecm_class_handler,
-		.custom_handler = NULL,
-		.vendor_handler = NULL,
+		.custom_handler = ecm_custom_handler,
+		.vendor_handler = ecm_vendor_handler,
 	},
 	.num_endpoints = ARRAY_SIZE(ecm_ep_data),
 	.endpoint = ecm_ep_data,

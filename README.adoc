@@ -1,0 +1,17 @@
+:source-highlighter: rouge
+:toc:
+:toclevels: 5
+
+# nRF Connect SDK / Zephyr Games
+
+Playing with nRF Connect SDK and Zephyr.
+
+
+link:zperf[zperf]::
+   Trying to port my USB NCM driver from TinyUSB to Zephyr
+
+link:cdc_acm[CDC ACM]::
+   playing 1... more or less the original example
+   
+link:dumb_http_server[Dumb http Server]::
+   playing 2... more or less the original example

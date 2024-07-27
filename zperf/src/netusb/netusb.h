@@ -15,6 +15,10 @@
 #define CDC_EEM_OUT_EP_ADDR		0x01
 #define CDC_EEM_IN_EP_ADDR		0x82
 
+#define CDC_NCM_INT_EP_ADDR     0x83
+#define CDC_NCM_IN_EP_ADDR      0x82
+#define CDC_NCM_OUT_EP_ADDR     0x01
+
 #define RNDIS_INT_EP_ADDR		0x83
 #define RNDIS_IN_EP_ADDR		0x82
 #define RNDIS_OUT_EP_ADDR		0x01

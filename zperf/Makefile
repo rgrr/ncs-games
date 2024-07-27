@@ -2,14 +2,45 @@
 #
 BUILD_DIR := _build
 PROJECT   := zephyr
-BOARD     := nrf52840dk_nrf52840
+CONF      := 2
+#BOARD     := rpi_pico
+BOARD     := nrf52840dk/nrf52840
+BOARD_    := $(subst /,_,$(BOARD))
+WEST_CONF += -DBOARD_ROOT=.
 
 SHELL     := /usr/bin/bash
 
 
+ifeq ($(CONF),0)
+    # old
+    WEST_CONF += -DEXTRA_CONF_FILE="overlay-netusb.conf boards/$(BOARD_).conf"
+    WEST_CONF += -DDTC_OVERLAY_FILE="boards/$(BOARD_).overlay"
+endif
+ifeq ($(CONF),1)
+    # next-ecm
+    WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next.conf boards/$(BOARD_).conf"
+    WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ecm.overlay boards/$(BOARD_).overlay"
+endif
+ifeq ($(CONF),2)
+    # next-ncm
+    WEST_CONF += -DEXTRA_CONF_FILE="overlay-usbd_next.conf boards/$(BOARD_).conf"
+    WEST_CONF += -DDTC_OVERLAY_FILE="usbd_next_ncm.overlay boards/$(BOARD_).overlay"
+endif
+
+
 .PHONY: aaa
 aaa:
-	source ../zephyr-env.sh; west -V
+	. ../zephyr-env.sh; printenv | sort
+	. ../zephyr-env.sh; which python; python --version
+	. ../zephyr-env.sh; which west; west --version
+	. ../zephyr-env.sh; which cmake; cmake --version
+
+
+# Zephyr update components
+.PHONY: west-update
+west-update:
+	. ../zephyr-env.sh; west --version
+	. ../zephyr-env.sh; west -v update
 
 
 .PHONY: clean
@@ -17,20 +48,17 @@ clean:
 	. ../zephyr-env.sh; west build -t clean --build-dir $(BUILD_DIR)
 
 
-# -DCONFIG_DEBUG_OPTIMIZATIONS=y -DCONFIG_DEBUG_THREAD_INFO=y -DCONFIG_CORTEX_M_DEBUG_MONITOR_HOOK=y -DCONFIG_SEGGER_DEBUGMON=y
-# -DCONFIG_SPEED_OPTIMIZATIONS=y
-# -DCONFIG_SIZE_OPTIMIZATIONS=y
 .PHONY: create-config
 create-config:
-	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
+	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- $(WEST_CONF) -DCONFIG_SIZE_OPTIMIZATIONS=y
 
 .PHONY: create-config-debug
 create-config-debug:
-	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DCONFIG_DEBUG_OPTIMIZATIONS=y -DCONFIG_DEBUG_THREAD_INFO=y -DCONFIG_CORTEX_M_DEBUG_MONITOR_HOOK=y -DCONFIG_SEGGER_DEBUGMON=y -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
+	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- $(WEST_CONF) -DCONFIG_DEBUG_OPTIMIZATIONS=y -DCONFIG_DEBUG_THREAD_INFO=y -DCONFIG_CORTEX_M_DEBUG_MONITOR_HOOK=y -DCONFIG_SEGGER_DEBUGMON=y
 
 .PHONY: create-config-speed
 create-config-speed:
-	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- -DCONFIG_SPEED_OPTIMIZATIONS=y -DNCS_TOOLCHAIN_VERSION=NONE -DBOARD_ROOT=. -DEXTRA_CONF_FILE=boards/$(BOARD).conf -DCACHED_CONF_FILE=prj.conf
+	. ../zephyr-env.sh; west build --build-dir $(BUILD_DIR) . --pristine --board $(BOARD) --no-sysbuild --cmake-only -- $(WEST_CONF) -DCONFIG_SPEED_OPTIMIZATIONS=y
 
 
 .PHONY: all
@@ -49,5 +77,12 @@ details: all
 
 .PHONY: flash
 flash: all
-	cp $(BUILD_DIR)/zephyr/$(PROJECT).uf2 /media/picoprobe
+	#cp $(BUILD_DIR)/zephyr/$(PROJECT).uf2 /media/picoprobe
+	pyocd flash $(BUILD_DIR)/zephyr/$(PROJECT).elf -f 10m -e chip
 	@echo "ok."
+
+
+.PHONY: reset
+reset:
+	pyocd reset -f 10m
+
